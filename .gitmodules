@@ -1,0 +1,6 @@
+[submodule "libs/airwin2rack"]
+	path = libs/airwin2rack
+	url = https://github.com/baconpaul/airwin2rack.git
+[submodule "libs/max-sdk-base"]
+	path = libs/max-sdk-base
+	url = https://github.com/Cycling74/max-sdk-base.git
