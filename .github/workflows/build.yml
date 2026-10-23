@@ -1,0 +1,102 @@
+name: build
+
+on:
+  push:
+    branches: [main, ci]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init submodules (non-recursive)
+        run: git submodule update --init libs/airwin2rack libs/max-sdk-base
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Check effects
+        run: ./build/tools/awtool/awtool check 48000
+      - name: Generate devices
+        run: |
+          ./build/tools/awtool/awtool dump > registry.json
+          python3 tools/gen_devices.py registry.json devices
+      - name: Package
+        run: |
+          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices
+          cp -R externals/airwin~.mxo dist/airwindows-m4l/externals/
+          cp devices/*.amxd dist/airwindows-m4l/devices/
+          cp README.md LICENSE package-info.json dist/airwindows-m4l/
+          cd dist && zip -qr ../airwindows-m4l-macos.zip airwindows-m4l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airwindows-m4l-macos
+          path: dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zip-macos
+          path: airwindows-m4l-macos.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Init submodules (non-recursive)
+        run: git submodule update --init libs/airwin2rack libs/max-sdk-base
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Check effects
+        run: ./build/tools/awtool/awtool.exe check 48000
+      - name: Generate devices
+        run: |
+          ./build/tools/awtool/awtool.exe dump > registry.json
+          python tools/gen_devices.py registry.json devices
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices
+          cp externals/airwin~.mxe64 dist/airwindows-m4l/externals/
+          cp devices/*.amxd dist/airwindows-m4l/devices/
+          cp README.md LICENSE package-info.json dist/airwindows-m4l/
+          cd dist && 7z a -tzip ../airwindows-m4l-windows.zip airwindows-m4l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: airwindows-m4l-windows
+          path: dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zip-windows
+          path: airwindows-m4l-windows.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: zip-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: "*.zip"
+          generate_release_notes: true

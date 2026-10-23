@@ -6,6 +6,6 @@
 	"description" : "All Airwindows effects as Max for Live devices, one device per category, using the airwin~ external.",
 	"tags" : [ "audio", "effects", "airwindows", "max for live" ],
 	"max_version_min" : "9.0",
-	"os" : { "macintosh" : { "platform" : [ "aarch64", "x64" ], "min_version" : "11.0" } },
+	"os" : { "macintosh" : { "platform" : [ "aarch64", "x64" ], "min_version" : "11.0" }, "windows" : { "platform" : [ "x64" ], "min_version" : "10" } },
 	"website" : "https://github.com/alealeluyah/airwindows-m4l"
 }
