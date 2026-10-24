@@ -35,6 +35,8 @@ FONT_SIZE = 9.5
 DIM = [1.0, 1.0, 1.0, 0.46]   # secondary text colour Ableton uses on dark panels
 
 LOG_PATH = ""       # set with --log to make the device JavaScript write a debug log
+TEST_SIGNAL = False # --test-signal: built-in noise bursts, silent output (bench test in Max)
+UI = {}             # per category: chosen design option, width, view tabs (javascript/aw_ui_manifest.json)
 
 CODE = r"""
 inlets = 4;
@@ -113,31 +115,8 @@ function step(d) {
 function left() { if (inlet === 3) step(-1); }
 function right() { if (inlet === 3) step(1); }
 
-// Lay out n dials: one centred row up to G.cols, else two rows split evenly.
-function nparams(n) {
-    log("nparams", n);
-    const rows = n <= G.cols ? 1 : 2;
-    const perRow = Math.ceil(n / rows);
-    const slotH = G.nameH + G.dialH + G.valueH;
-    const top = rows === 1 ? Math.round((G.h - slotH) / 2) - 4 : 6;
-    for (let k = 0; k < NSLOT; k++) {
-        const ids = ["name" + k, "dial" + k, "value" + k];
-        if (k >= n) {
-            ids.forEach(id => script("hide", id));
-            continue;
-        }
-        const row = Math.floor(k / perRow);
-        const inRow = row === rows - 1 ? n - perRow * (rows - 1) : perRow;
-        const col = k - row * perRow;
-        const x = G.gridX + (G.gridW - inRow * G.slotW) / 2 + col * G.slotW;
-        const y = top + row * (slotH + G.rowGap);
-        script("sendbox", ids[0], "presentation_rect", x, y, G.slotW, G.nameH);
-        script("sendbox", ids[1], "presentation_rect", x, y + G.nameH, G.slotW, G.dialH);
-        script("sendbox", ids[2], "presentation_rect", x, y + G.nameH + G.dialH, G.slotW, G.valueH);
-        ids.forEach(id => script("show", id));
-    }
-    script(n === 0 ? "show" : "hide", "noctl");
-}
+// The display (v8ui) lays out the controls; nothing to do here.
+function nparams(n) { log("nparams", n); }
 
 function pname(i, s) { script("sendbox", "name" + i, "set", s); }
 
@@ -195,19 +174,40 @@ def label(p, varname, prect, text="", just=1, color=None):
 
 def build(category, names):
     p = Patch()
-    plugin = p.newobj("plugin~", [20, 20, 60, 22], 2, 2, ["signal", "signal"])
     aw = p.newobj("airwin~", [20, 300, 80, 22], 2, 3, ["signal", "signal", ""])
-    plugout = p.newobj("plugout~", [20, 400, 60, 22], 2, 0, [])
-    p.line(plugin, 0, aw, 0)
-    p.line(plugin, 1, aw, 1)
-    p.line(aw, 0, plugout, 0)
-    p.line(aw, 1, plugout, 1)
+    if TEST_SIGNAL:
+        # bench test in Max: noise bursts at 4 Hz in, silent output, audio on at load
+        ph = p.newobj("phasor~ 4", [20, 20, 70, 22], 2, 1, ["signal"])
+        inv = p.newobj("!-~ 1", [20, 50, 50, 22], 2, 1, ["signal"])
+        sq = p.newobj("*~", [20, 80, 40, 22], 2, 1, ["signal"])
+        q4 = p.newobj("*~", [20, 110, 40, 22], 2, 1, ["signal"])
+        nz = p.newobj("noise~", [100, 80, 50, 22], 1, 1, ["signal"])
+        amp = p.newobj("*~", [20, 140, 40, 22], 2, 1, ["signal"])
+        lvl = p.newobj("*~ 0.9", [20, 170, 50, 22], 2, 1, ["signal"])
+        for a_, b_, i_ in [(ph, inv, 0), (inv, sq, 0), (inv, sq, 1), (sq, q4, 0), (sq, q4, 1), (q4, amp, 0), (nz, amp, 1), (amp, lvl, 0), (lvl, aw, 0), (lvl, aw, 1)]:
+            p.line(a_, 0, b_, i_)
+        mute = p.newobj("*~ 0.", [20, 360, 40, 22], 2, 1, ["signal"])
+        dac = p.newobj("dac~", [20, 400, 40, 22], 2, 0, [])
+        p.line(aw, 0, mute, 0)
+        p.line(mute, 0, dac, 0)
+        on = p.box("message", [100, 20, 70, 22], text="; dsp start", numinlets=2, numoutlets=1, outlettype=[""])
+        lb0 = p.newobj("loadbang", [100, 0, 60, 22], 1, 1, ["bang"])
+        p.line(lb0, 0, on, 0)
+    else:
+        plugin = p.newobj("plugin~", [20, 20, 60, 22], 2, 2, ["signal", "signal"])
+        plugout = p.newobj("plugout~", [20, 400, 60, 22], 2, 0, [])
+        p.line(plugin, 0, aw, 0)
+        p.line(plugin, 1, aw, 1)
+        p.line(aw, 0, plugout, 0)
+        p.line(aw, 1, plugout, 1)
 
-    # selector panel, drawn first so it sits behind its contents
-    p.box("panel", [700, 200, 150, 161], angle=270.0, bgcolor=[0.0, 0.0, 0.0, 0.1], mode=0,
-          proportion=0.39, rounded=6, style="", numinlets=1, numoutlets=0, presentation=1,
-          presentation_rect=[PANEL_X, PANEL_Y, PANEL_W, PANEL_H])
-    label(p, "fxlabel", [PANEL_X + 6, PANEL_Y + 4, 80, 14], text=category, just=0, color=DIM)
+    ui = UI.get(category, {"width": 560, "tabs": []})
+    width = float(ui["width"])
+    # the display, first so it sits behind every control; it places the controls itself
+    display = p.box("v8ui", [700, 200, width, DEVICE_H], varname="display",
+                    filename=f"aw_ui_{category}.js", numinlets=1, numoutlets=1,
+                    outlettype=[""], ignoreclick=1, border=0, parameter_enable=0,
+                    presentation=1, presentation_rect=[0.0, 0.0, width, float(DEVICE_H)])
     menu = p.box("live.menu", [200, 20, 140, 15], varname="Effect", numinlets=1, numoutlets=3,
                  outlettype=["", "", "float"], parameter_enable=1, presentation=1,
                  presentation_rect=[PANEL_X + 6, PANEL_Y + 20, PANEL_W - 12, 15],
@@ -229,12 +229,8 @@ def build(category, names):
     p.box("textedit", [prect[0] + 700, prect[1] + 400, prect[2], prect[3]], varname="what",
           text="", readonly=1, border=0.0, bgcolor=[0.0, 0.0, 0.0, 0.0], textcolor=DIM,
           fontname=FONT, fontsize=FONT_SIZE, wordwrap=1, ignoreclick=1, keymode=0,
-          lines=0, numinlets=1, numoutlets=4, outlettype=["", "int", "", ""],
-          presentation=1, presentation_rect=prect)
+          lines=0, numinlets=1, numoutlets=4, outlettype=["", "int", "", ""])
 
-    label(p, "noctl", [GRID_X, DEVICE_H / 2 - 8, GRID_W, 16],
-                  text="This effect has no controls", color=DIM)
-    p.boxes[-1]["box"]["hidden"] = 1
 
     thisdev = p.newobj("live.thisdevice", [400, 60, 90, 22], 1, 3, ["bang", "int", "int"])
     geometry = {"cols": COLS, "slotW": SLOT_W, "gridX": GRID_X, "gridW": GRID_W, "h": DEVICE_H,
@@ -252,6 +248,56 @@ def build(category, names):
     p.line(aw, 2, ctrl, 0)
     p.line(ctrl, 0, aw, 0)
     p.line(ctrl, 1, thispatcher, 0)
+    p.line(aw, 2, display, 0)
+    p.line(display, 0, thispatcher, 0)
+
+    # display data from airwin~ (about 30 per second), on load in Live and in Max
+    meter = p.box("message", [520, 260, 60, 22], text="meter 1", numinlets=2, numoutlets=1, outlettype=[""])
+    lb = p.newobj("loadbang", [520, 230, 60, 22], 1, 1, ["bang"])
+    p.line(lb, 0, meter, 0)
+    p.line(thisdev, 0, meter, 0)
+    p.line(meter, 0, aw, 0)
+
+    # Live theme: dark or light, from the control background colour
+    colq = p.box("message", [600, 260, 100, 22], text="live_control_bg", numinlets=2, numoutlets=1, outlettype=[""])
+    colors = p.newobj("live.colors", [600, 290, 70, 22], 1, 2, ["", "bang"])
+    p.line(lb, 0, colq, 0)
+    p.line(thisdev, 0, colq, 0)
+    p.line(colors, 1, colq, 0)
+    p.line(colq, 0, colors, 0)
+    p.line(colors, 0, display, 0)
+
+    # Input / Output gain (dB), on every device
+    for i, (vn, long, msg) in enumerate([("gainIn", "Input", "ingain"), ("gainOut", "Output", "outgain")]):
+        g = p.box("live.dial", [1300 + i * 60, 20, 44, 48], varname=vn, numinlets=1, numoutlets=2,
+                  outlettype=["", "float"], parameter_enable=1, showname=1, shownumber=1,
+                  presentation=1, presentation_rect=[width - 66 + 0, 8 + i * 80, 44, 52],
+                  saved_attribute_attributes={"valueof": {
+                      "parameter_longname": long, "parameter_shortname": long, "parameter_type": 0,
+                      "parameter_mmin": -36.0, "parameter_mmax": 36.0, "parameter_initial": [0.0],
+                      "parameter_initial_enable": 1, "parameter_unitstyle": 4,
+                      "parameter_modmode": 3, "parameter_order": 1}})
+        p.params[g] = [long, long, 1]
+        pre = p.newobj(f"prepend {msg}", [1300 + i * 60, 80, 80, 22], 1, 1, [""])
+        p.line(g, 0, pre, 0)
+        p.line(pre, 0, aw, 0)
+
+    # view switch, for designs with more than one display view
+    if ui["tabs"]:
+        tab = p.box("live.tab", [1450, 20, 120, 15], varname="view", numinlets=1, numoutlets=3,
+                    outlettype=["", "", "float"], parameter_enable=1, num_lines_patching=1,
+                    num_lines_presentation=1, presentation=1, hidden=0,
+                    presentation_rect=[width / 2, 4, 120, 15],
+                    saved_attribute_attributes={"valueof": {
+                        "parameter_enum": ui["tabs"], "parameter_longname": "View",
+                        "parameter_shortname": "View", "parameter_type": 2,
+                        "parameter_mmax": len(ui["tabs"]) - 1, "parameter_initial": [0],
+                        "parameter_initial_enable": 1, "parameter_unitstyle": 9,
+                        "parameter_order": 1}})
+        p.params[tab] = ["View", "View", 1]
+        pv = p.newobj("prepend view", [1450, 50, 80, 22], 1, 1, [""])
+        p.line(tab, 0, pv, 0)
+        p.line(pv, 0, display, 0)
 
     # dial slots start hidden in a default grid; the codebox places them per effect
     for k in range(NSLOT):
@@ -275,7 +321,7 @@ def build(category, names):
         p.line(prep, 0, aw, 0)
 
     banks = {}
-    order = ["Effect"] + [f"Param {k + 1}" for k in range(NSLOT)]
+    order = ["Effect", "Input", "Output"] + [f"Param {k + 1}" for k in range(NSLOT)]
     for b in range(0, len(order), 8):
         chunk = order[b:b + 8]
         banks[str(b // 8)] = {"index": b // 8, "name": "", "parameters": chunk + ["-"] * (8 - len(chunk))}
@@ -288,12 +334,12 @@ def build(category, names):
         "appversion": {"major": 9, "minor": 1, "revision": 5, "architecture": "x64", "modernui": 1},
         "classnamespace": "box",
         "rect": [100.0, 100.0, 1500.0, 700.0],
-        "openrect": [0.0, 0.0, DEVICE_W, float(DEVICE_H)],
+        "openrect": [0.0, 0.0, width, float(DEVICE_H)],
         "openinpresentation": 1,
         "default_fontsize": 10.0,
         "default_fontname": "Arial Bold",
         "gridsize": [8.0, 8.0],
-        "devicewidth": DEVICE_W,
+        "devicewidth": width,
         "description": f"Airwindows {category} effects",
         "tags": "airwindows",
         "latency": 0,
@@ -323,11 +369,17 @@ def main():
     ap.add_argument("outdir")
     ap.add_argument("--only", help="generate a single category")
     ap.add_argument("--log", default="", help="debug log file for the device JavaScript")
+    ap.add_argument("--test-signal", action="store_true", help="bench-test build: built-in input, silent output")
     ap.add_argument("--order", default=str(Path(__file__).with_name("effect_order.json")),
                     help="committed menu order per category; new effects are appended")
     a = ap.parse_args()
-    global LOG_PATH
+    global LOG_PATH, UI, TEST_SIGNAL
     LOG_PATH = a.log
+    TEST_SIGNAL = a.test_signal
+    man = Path(__file__).resolve().parent.parent / "javascript" / "aw_ui_manifest.json"
+    if not man.exists():
+        raise SystemExit("run tools/build_ui.py first (javascript/aw_ui_manifest.json is missing)")
+    UI = json.loads(man.read_text())
 
     reg = json.load(open(a.registry))
     assert max(len(e["params"]) for e in reg) <= NSLOT, "an effect has more parameters than slots"

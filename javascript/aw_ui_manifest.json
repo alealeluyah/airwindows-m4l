@@ -1,0 +1,120 @@
+{
+ "Ambience": {
+  "option": "A",
+  "tabs": [],
+  "width": 608
+ },
+ "Amp Sims": {
+  "option": "A",
+  "tabs": [],
+  "width": 700
+ },
+ "Bass": {
+  "option": "A",
+  "tabs": [],
+  "width": 668
+ },
+ "Biquads": {
+  "option": "A",
+  "tabs": [],
+  "width": 528
+ },
+ "Brightness": {
+  "option": "A",
+  "tabs": [],
+  "width": 668
+ },
+ "Clipping": {
+  "option": "A",
+  "tabs": [],
+  "width": 548
+ },
+ "Consoles": {
+  "option": "A",
+  "tabs": [],
+  "width": 592
+ },
+ "Distortion": {
+  "option": "A",
+  "tabs": [],
+  "width": 548
+ },
+ "Dithers": {
+  "option": "A",
+  "tabs": [],
+  "width": 668
+ },
+ "Dynamics": {
+  "option": "AB",
+  "tabs": [
+   "Needle",
+   "Activity"
+  ],
+  "width": 556
+ },
+ "Effects": {
+  "option": "A",
+  "tabs": [],
+  "width": 688
+ },
+ "Filter": {
+  "option": "A",
+  "tabs": [],
+  "width": 668
+ },
+ "Lo-Fi": {
+  "option": "A",
+  "tabs": [],
+  "width": 700
+ },
+ "Noise": {
+  "option": "A",
+  "tabs": [],
+  "width": 588
+ },
+ "Reverb": {
+  "option": "A",
+  "tabs": [],
+  "width": 636
+ },
+ "Saturation": {
+  "option": "A",
+  "tabs": [],
+  "width": 498
+ },
+ "Stereo": {
+  "option": "A",
+  "tabs": [],
+  "width": 588
+ },
+ "Subtlety": {
+  "option": "A",
+  "tabs": [],
+  "width": 638
+ },
+ "Tape": {
+  "option": "A",
+  "tabs": [],
+  "width": 608
+ },
+ "Tone Color": {
+  "option": "A",
+  "tabs": [],
+  "width": 450
+ },
+ "Unclassified": {
+  "option": "A",
+  "tabs": [],
+  "width": 700
+ },
+ "Utility": {
+  "option": "A",
+  "tabs": [],
+  "width": 628
+ },
+ "XYZ Filters": {
+  "option": "A",
+  "tabs": [],
+  "width": 568
+ }
+}

@@ -23,6 +23,16 @@ S.themes = __THEMES__;
 S.theme = "dark";
 S.cat = CATEGORY;
 
+const LOG = __LOG__;
+function log() {
+  if (!LOG) return;
+  const f = new File(LOG, "write");
+  if (!f.isopen) return;
+  f.position = f.eof;
+  f.writeline(CATEGORY + ": " + arrayfromargs(arguments).join(" "));
+  f.close();
+}
+
 const DES = DESIGNS[CATEGORY];
 const OPT = DES.options.find(o => o.id === OPTION) || DES.options[0];
 
@@ -30,6 +40,7 @@ let st = newState();
 let params = [];
 let rec = [];
 let lastLayout = "";
+let sentBack = false;
 let lastT = Date.now();
 
 // ---------------------------------------------------------------- measurements from airwin~
@@ -39,8 +50,10 @@ const M = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb
 function levels(a, b, c, d, e, f, g, h) {
   M.inPkDb = [a, b]; M.outPkDb = [c, d]; M.inRmsDb = e; M.outRmsDb = f; M.gainDb = g; M.corr = h;
 }
+let frames = 0;
 function peaks(i, o) {
   M.inPk = i; M.outPk = o;
+  if (LOG && frames++ % 30 === 0) log("frame", frames, "in", M.inPkDb[0].toFixed(1), "out", M.outPkDb[0].toFixed(1), "gain", M.gainDb.toFixed(2));
   // "peaks" is the last message of each frame: advance the display state and repaint
   const now = Date.now(), dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
   st.t += dt;
@@ -66,14 +79,21 @@ knob = function (c, th, x, y, w, p, v, big) {
 };
 menu = function (c, th, x, y, w) { rec.push({ k: "menu", x, y: y - HEAD_H, w }); };
 arrows = function (c, th, x, y) { rec.push({ k: "arrows", x, y: y - HEAD_H }); };
-toggle = function (c, th, x, y, w, label, on) { rec.push({ k: "tab", x, y: y - HEAD_H, w, label }); };
+viewTabs = function (c, th, x, y, labels, active) {
+  // the device's live.tab "view" draws these; record the area it must cover
+  let w = 0; c.font = `400 9.5px ${FONT}`;
+  for (const l of labels) w += Math.ceil(c.measureText(l).width) + 14;
+  rec.push({ k: "tab", x, y: y - HEAD_H, w: w - 2, labels });
+  return [];
+};
 
-function script() { outlet(0, ["script"].concat(arrayfromargs(arguments))); }
+function script() { const a = arrayfromargs(arguments); log("script", a.join(" ")); outlet(0, ["script"].concat(a)); }
 function rect(id, x, y, w, h) { script("sendbox", id, "presentation_rect", Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
 
 function publishLayout() {
   const key = JSON.stringify(rec.map(r => [r.k, r.i, Math.round(r.x), Math.round(r.y), Math.round(r.w || 0), r.big, r.name]));
   if (key === lastLayout) return;
+  if (!lastLayout && !sentBack) { script("sendtoback", "display"); sentBack = true; } // behind Live's controls
   lastLayout = key;
   const shown = {};
   let gains = 0, tabs = [];
@@ -96,11 +116,8 @@ function publishLayout() {
     }
   }
   for (let i = 0; i < 13; i++) if (!shown["dial" + i]) ["name", "dial", "value"].forEach(p => script("hide", p + i));
-  if (tabs.length) {
-    const x0 = tabs[0].x, x1 = tabs[tabs.length - 1].x + tabs[tabs.length - 1].w;
-    rect("view", x0, tabs[0].y, x1 - x0, 15);
-    script("show", "view");
-  } else script("hide", "view");
+  if (tabs.length) { rect("view", tabs[0].x, tabs[0].y, tabs[0].w, 15); script("show", "view"); }
+  else script("hide", "view");
 }
 
 // the device's "view" tab (live.tab) reports its index here
@@ -116,6 +133,7 @@ function paint() {
     OPT.draw(c, th, st, params, params.map(() => 0.5));
   } catch (e) {
     post("aw_ui draw error: " + e + "\n");
+    log("draw error", e, e && e.stack);
   }
   publishLayout();
 }
@@ -131,3 +149,6 @@ function liveGeneric(st, m, dt) {
   st.hist.push({ inA: m.inPk, out: outDb, gr: st.gr, dry: m.inPk, wet: m.outPk });
   if (st.hist.length > 800) st.hist.shift();
 }
+
+// live.colors answers "live_control_bg r g b a": a light control background means a light theme
+function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
