@@ -4,7 +4,7 @@ DESIGNS["Reverb"] = {
     refs: [["HybridReverbL12.png", "Hybrid Reverb"], ["ReverbL12.png", "Reverb"]],
     lead: "Visual cue: the reverb tail itself — what the space is doing to the sound, drawn live.",
     options: [
-      { id: "A", name: "Hybrid", width: 600, step: stepReverb,
+      { id: "A", name: "Hybrid", width: 636, step: stepReverb,
         why: "Large dark display with the live wet signal scrolling in orange, controls as a row of dials under it — like Hybrid Reverb.",
         bullets: ["Scrolling wet waveform with dry hits in grey", "Effect menu and arrows inside the display", "In/Out meters on the right"],
         draw(c, th, st, ps, vals) {
@@ -16,9 +16,9 @@ DESIGNS["Reverb"] = {
           txt(c, dx + dw - 8, dy + 15, "Reverb · 6 controls", { color: th.dispText, align: "right" });
           rr(c, dx, dy + dh + 4, dw, DEVICE_H - dh - 16, 3, th.panel);
           knobGrid(c, th, ps, { x: dx, y: dy + dh + 6, w: dw, h: DEVICE_H - dh - 20 }, 8, vals, 60);
-          ioMeters(c, th, 570, HEAD_H + 22, 120, st);
+          gainStrip(c, th, 568, st);
         } },
-      { id: "B", name: "Hybrid display", width: 600, step: stepReverb,
+      { id: "B", name: "Hybrid display", width: 636, step: stepReverb,
         why: "Everything in one display: the waveform on top, and each control as a draggable coloured readout under it — Hybrid Reverb's display row.",
         bullets: ["Values are click-and-drag numbers (live.numbox), no dials", "Cyan readouts, grey labels, as in Hybrid Reverb", "Most compact: fits 13 controls in two rows"],
         draw(c, th, st, ps, vals) {
@@ -34,9 +34,9 @@ DESIGNS["Reverb"] = {
             txt(c, x, y, p.name, { color: th.dispText, size: 10 });
             txt(c, x, y + 15, fmt(p.display), { color: th.cyan, size: 11 });
           });
-          ioMeters(c, th, 570, HEAD_H + 22, 120, st);
+          gainStrip(c, th, 568, st);
         } },
-      { id: "C", name: "Decay map", width: 560, step: stepReverb,
+      { id: "C", name: "Decay map", width: 628, step: stepReverb,
         why: "Shows the shape of the tail (early reflections, then decay) with an estimated decay time, next to the dials.",
         bullets: ["Decay curve with time axis and ≈ decay time", "Selector panel on the left (as today)", "Dials in a grid on the right"],
         draw(c, th, st, ps, vals) {
@@ -47,6 +47,7 @@ DESIGNS["Reverb"] = {
           ["Galactic3 is a super-reverb", "designed specially for pads", "and space ambient."].forEach((l, i) => c.fillText(l, 10, HEAD_H + 54 + i * 12));
           decayMap(c, th, 140, HEAD_H + 6, 210, DEVICE_H - 12, st);
           knobGrid(c, th, ps, { x: 354, y: HEAD_H + 4, w: 202, h: DEVICE_H - 8 }, 3, vals);
+          gainStrip(c, th, 628 - GAIN_W - 4, st);
         } },
     ],
   };

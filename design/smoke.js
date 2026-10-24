@@ -35,11 +35,12 @@ function fakeCtx(bounds, problems, where) {
 
 const ctx = vm.createContext({
   console, Math, JSON, Array, Object, String, Number, Promise, Map, Set, Float32Array, Float64Array, Uint8ClampedArray,
-  performance: { now: () => 0 }, requestAnimationFrame() {}, location: { hash: "" },
+  performance: { now: () => 0 }, requestAnimationFrame() {}, location: { hash: "", search: "" }, URLSearchParams,
   window: { addEventListener() {}, devicePixelRatio: 1, scrollTo() {} },
   document: { getElementById: () => ({}), querySelectorAll: () => [], fonts: { load: async () => {} }, createElement: () => ({}), body: { appendChild() {} } },
   fetch: async () => ({ json: async () => ({}) }),
 });
+vm.runInContext(fs.readFileSync(path.join(D, "lib.js"), "utf8"), ctx, { filename: "lib.js" });
 vm.runInContext(fs.readFileSync(path.join(D, "app.js"), "utf8").replace(/\ninit\(\);\s*$/, "\n"), ctx, { filename: "app.js" });
 vm.runInContext(`S.themes = ${fs.readFileSync(path.join(D, "themes.json"), "utf8")};
   S.reg = ${fs.readFileSync(path.join(D, "registry.json"), "utf8")};

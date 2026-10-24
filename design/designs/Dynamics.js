@@ -4,6 +4,29 @@ DESIGNS["Dynamics"] = {
     refs: [["GlueL12.png", "Glue Compressor"], ["CompressorL12.png", "Compressor"], ["LimiterL12.png", "Limiter"]],
     lead: "Visual cue: how much the effect is turning the level down (gain reduction), measured live from input vs output.",
     options: [
+      { id: "AB", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics,
+        why: "One display with two views, switched by the buttons in its header like Compressor: Glue's gain-reduction needle, or Compressor's activity history. Input and Output gain on the right.",
+        bullets: ["Click Needle / Activity in the display header to switch views (a saved device setting)",
+                  "Both views are driven by input vs output level (gain reduction), measured by airwin~",
+                  "First 4 controls under the display, the rest in the left columns; Input / Output gain at the right"],
+        click(x, y, st) { for (const [i, r] of (st.tabs || []).entries()) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) st.view = i; },
+        draw(c, th, st, ps, vals) {
+          menu(c, th, 6, HEAD_H + 6, 116, "Pressure5"); arrows(c, th, 126, HEAD_H + 6);
+          const rest = ps.slice(4);
+          if (rest.length) knobGrid(c, th, rest, { x: 4, y: HEAD_H + 24, w: 150, h: DEVICE_H - 28 }, 2, vals);
+          else if (!ps.length) txt(c, 79, HEAD_H + 90, "No controls", { color: th.dim });
+          const dx = 160, dw = 324, dy = HEAD_H + 6, dh = 98;
+          rr(c, dx, dy, dw, dh, 3, th.display);
+          st.tabs = viewTabs(c, th, dx + 5, dy + 4, ["Needle", "Activity"], st.view || 0);
+          txt(c, dx + dw - 8, dy + 15, `GR -${st.gr.toFixed(1)} dB`, { color: th.orange, align: "right" });
+          c.fillStyle = th.dline; c.fillRect(dx, dy + 22, dw, 1);
+          if ((st.view || 0) === 0) grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
+          else activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
+          const first = ps.slice(0, 4);
+          rr(c, dx, dy + dh + 4, dw, DEVICE_H - dh - 16, 3, th.panel);
+          first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, dy + dh + 6, 74, p, vals[p._i], true));
+          gainStrip(c, th, 556 - GAIN_W - 4, st);
+        } },
       { id: "A", name: "Glue", width: 470, step: stepDynamics,
         why: "Analog needle in a dark display, the first two controls large under it, the rest in side columns — like Glue Compressor.",
         bullets: ["Gain-reduction needle, 0–20 dB", "First two controls as large dials inside the display", "Effect menu and arrows top-left"],

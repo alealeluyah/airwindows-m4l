@@ -12,6 +12,14 @@
 //   reset              reload the current effect (clears tails)
 //   list <category>    output "algos <names...>" (all effects when no category given)
 //   categories         output "categories <names...>"
+//   ingain <dB>        input gain before the effect (smoothed; -70 dB or less = silence)
+//   outgain <dB>       output gain after the effect (smoothed)
+//   meter <0|1>        stop/start display data, about 30 times per second:
+//                        levels <inPkL inPkR outPkL outPkR inRms outRms gain corr> (dB; corr -1..1)
+//                        peaks <in out>          linear mono peaks of the last frame
+//                        spec_in / spec_out <48> band levels in dBFS, 20 Hz .. 20 kHz, log-spaced
+//                        xfer <32>               mean output per input-amplitude bin (-9 = no data)
+//                        scope <64 L> <64 R>     recent output samples
 //
 // Effect swaps and parameter changes reach the audio thread lock-free.
 
@@ -19,6 +27,7 @@
 #include "ext_obex.h"
 #include "z_dsp.h"
 
+#include "aw_analysis.h"
 #include "aw_registry.h"
 
 #include <atomic>
@@ -52,13 +61,19 @@ struct Impl
     std::atomic<uint32_t> paramGen{0};
     std::atomic<uint64_t> displayDirty{0};
     std::atomic<float> sampleRate{48000.f};
+    std::atomic<float> inGainTarget{1.f}, outGainTarget{1.f};
 
     // audio thread
     FxBox *audio{nullptr};
     float audioRate{0.f};
     float applied[kMaxParams];
     uint32_t appliedGen{0};
+    double inGain{1.0}, outGain{1.0}; // smoothed per sample toward the targets
     std::vector<double> inL, inR;
+
+    // display measurements: audio thread pushes, meter clock (main thread) reads
+    aw::Collector meter;
+    aw::Display shown;
 
     Impl() : inL(kChunk, 0.0), inR(kChunk, 0.0)
     {
@@ -86,6 +101,8 @@ typedef struct _airwin
     void *infoOut;
     void *qelem;     // frees retired effects on the main thread
     void *displayQ;  // sends value text for changed parameters on the main thread
+    void *meterClock; // display data, when "meter 1"
+    bool meterOn;
     Impl *impl;
 } t_airwin;
 
@@ -274,6 +291,11 @@ static void airwin_param(t_airwin *x, t_symbol *, long ac, t_atom *av)
     qelem_set(x->displayQ);
 }
 
+static float db_to_gain(double db) { return db <= -70.0 ? 0.f : (float)std::pow(10.0, db / 20.0); }
+
+static void airwin_ingain(t_airwin *x, double db) { x->impl->inGainTarget.store(db_to_gain(db)); }
+static void airwin_outgain(t_airwin *x, double db) { x->impl->outGainTarget.store(db_to_gain(db)); }
+
 static void airwin_list_algos(t_airwin *x, t_symbol *s, long ac, t_atom *av)
 {
     aw::ensureRegistry();
@@ -309,6 +331,49 @@ static void airwin_categories(t_airwin *x)
         out.push_back(a);
     }
     outlet_anything(x->infoOut, gensym("categories"), (short)out.size(), out.data());
+}
+
+static void out_floats(t_airwin *x, const char *sel, const float *v, int n, float nanAs = -9.f)
+{
+    t_atom a[128];
+    n = (std::min)(n, 128);
+    for (int i = 0; i < n; ++i)
+        atom_setfloat(a + i, std::isfinite(v[i]) ? v[i] : nanAs);
+    outlet_anything(x->infoOut, gensym(sel), (short)n, a);
+}
+
+// meter clock (main thread): newest frame -> display messages
+static void airwin_meter_tick(t_airwin *x)
+{
+    if (!x->meterOn)
+        return;
+    Impl *im = x->impl;
+    if (const aw::Frame *f = im->meter.latest())
+    {
+        aw::Display &d = im->shown;
+        aw::analyze(*f, im->sr, d);
+        float lv[8] = {d.inPkDb[0], d.inPkDb[1], d.outPkDb[0], d.outPkDb[1], d.inRmsDb, d.outRmsDb, d.gainDb, d.corr};
+        out_floats(x, "levels", lv, 8);
+        float pk[2] = {d.inPk, d.outPk};
+        out_floats(x, "peaks", pk, 2);
+        out_floats(x, "spec_in", d.specIn, aw::kBands);
+        out_floats(x, "spec_out", d.specOut, aw::kBands);
+        out_floats(x, "xfer", d.xfer, aw::kXferBins);
+        float sc[128];
+        std::copy(d.scopeL, d.scopeL + 64, sc);
+        std::copy(d.scopeR, d.scopeR + 64, sc + 64);
+        out_floats(x, "scope", sc, 128);
+    }
+    clock_fdelay(x->meterClock, 33.);
+}
+
+static void airwin_meter(t_airwin *x, long on)
+{
+    x->meterOn = on != 0;
+    if (x->meterOn)
+        clock_fdelay(x->meterClock, 0.);
+    else
+        clock_unset(x->meterClock);
 }
 
 static void airwin_perform64(t_airwin *x, t_object *, double **ins, long, double **outs, long,
@@ -353,17 +418,9 @@ static void airwin_perform64(t_airwin *x, t_object *, double **ins, long, double
             fx->fx->setSampleRate(sr);
         }
     }
-    if (!fx)
-    {
-        if (outs[0] != ins[0])
-            std::copy(ins[0], ins[0] + n, outs[0]);
-        if (outs[1] != ins[1])
-            std::copy(ins[1], ins[1] + n, outs[1]);
-        return;
-    }
 
     uint32_t gen = im->paramGen.load();
-    if (gen != im->appliedGen)
+    if (fx && gen != im->appliedGen)
     {
         im->appliedGen = gen;
         for (int i = 0; i < fx->nParams; ++i)
@@ -378,15 +435,39 @@ static void airwin_perform64(t_airwin *x, t_object *, double **ins, long, double
     }
 
     // Max may hand the same buffer to input and output; Airwindows reads and writes per sample
-    // but some effects read ahead, so feed it private copies of the input.
+    // but some effects read ahead, so feed it private copies of the input (with input gain).
+    // One-pole smoothing of both gains, about 10 ms.
+    const double k = 1.0 - std::exp(-1.0 / (0.010 * (im->audioRate > 0 ? im->audioRate : 48000.0)));
+    const double inT = im->inGainTarget.load(), outT = im->outGainTarget.load();
     for (long off = 0; off < n; off += kChunk)
     {
         long len = (std::min)(kChunk, n - off);
-        std::copy(ins[0] + off, ins[0] + off + len, im->inL.data());
-        std::copy(ins[1] + off, ins[1] + off + len, im->inR.data());
+        double gi = im->inGain;
+        for (long i = 0; i < len; ++i)
+        {
+            gi += (inT - gi) * k;
+            im->inL[i] = ins[0][off + i] * gi;
+            im->inR[i] = ins[1][off + i] * gi;
+        }
+        im->inGain = gi;
         double *in2[2] = {im->inL.data(), im->inR.data()};
         double *out2[2] = {outs[0] + off, outs[1] + off};
-        fx->fx->processDoubleReplacing(in2, out2, (VstInt32)len);
+        if (fx)
+            fx->fx->processDoubleReplacing(in2, out2, (VstInt32)len);
+        else
+        {
+            std::copy(in2[0], in2[0] + len, out2[0]);
+            std::copy(in2[1], in2[1] + len, out2[1]);
+        }
+        double go = im->outGain;
+        for (long i = 0; i < len; ++i)
+        {
+            go += (outT - go) * k;
+            out2[0][i] *= go;
+            out2[1][i] *= go;
+        }
+        im->outGain = go;
+        im->meter.push(in2[0], in2[1], out2[0], out2[1], len);
     }
 }
 
@@ -398,6 +479,7 @@ static void airwin_dsp64(t_airwin *x, t_object *dsp64, short *, double samplerat
     Impl *im = x->impl;
     im->sr = samplerate;
     im->sampleRate.store((float)samplerate);
+    im->meter.setHop((long)(samplerate / 30.0));
     AirwinConsolidatedBase::defaultSampleRate = (float)samplerate;
     if (im->ui)
         im->ui->fx->setSampleRate((float)samplerate);
@@ -424,6 +506,8 @@ static void *airwin_new(t_symbol *, long ac, t_atom *av)
     outlet_new((t_object *)x, "signal");
     x->qelem = qelem_new(x, (method)free_retired);
     x->displayQ = qelem_new(x, (method)airwin_display);
+    x->meterClock = clock_new(x, (method)airwin_meter_tick);
+    x->meterOn = false;
     x->impl = new Impl();
     x->impl->sr = sys_getsr() > 0 ? sys_getsr() : 48000;
     x->impl->sampleRate.store((float)x->impl->sr);
@@ -441,6 +525,8 @@ static void *airwin_new(t_symbol *, long ac, t_atom *av)
 static void airwin_free(t_airwin *x)
 {
     dsp_free((t_pxobject *)x);
+    clock_unset(x->meterClock);
+    object_free(x->meterClock);
     qelem_free(x->qelem);
     qelem_free(x->displayQ);
     delete x->impl;
@@ -459,6 +545,9 @@ extern "C" void ext_main(void *)
     class_addmethod(c, (method)airwin_reset, "reset", 0);
     class_addmethod(c, (method)airwin_list_algos, "list", A_GIMME, 0);
     class_addmethod(c, (method)airwin_categories, "categories", 0);
+    class_addmethod(c, (method)airwin_meter, "meter", A_LONG, 0);
+    class_addmethod(c, (method)airwin_ingain, "ingain", A_FLOAT, 0);
+    class_addmethod(c, (method)airwin_outgain, "outgain", A_FLOAT, 0);
     class_dspinit(c);
     class_register(CLASS_BOX, c);
     airwin_class = c;

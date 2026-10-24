@@ -1,0 +1,74 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>mgcanvas check</title>
+<style>
+  @font-face { font-family: "Ableton Sans Small"; src: url(fonts/AbletonSansSmall-Regular.ttf); }
+  @font-face { font-family: "Ableton Sans Small"; font-weight: 700; src: url(fonts/AbletonSansSmall-Bold.ttf); }
+  body { background: #111; color: #ddd; font: 12px monospace; }
+  canvas { display: block; margin: 2px 0; }
+</style></head>
+<body>
+<pre id="out">running…</pre>
+<div id="pics"></div>
+<script src="lib.js"></script>
+<script src="mgcanvas.js"></script>
+<script>
+// Draw each option directly and through makeCanvas() on a stand-in mgraphics that renders
+// to a second canvas; report the share of pixels that differ by more than 48 levels.
+function fakeMg(c) {
+  let font = "Ableton Sans Small", size = 10;
+  return {
+    set_source_rgba(r, g, b, a) { c.fillStyle = c.strokeStyle = `rgba(${r * 255},${g * 255},${b * 255},${a})`; },
+    new_path() { c.beginPath(); }, move_to(x, y) { c.moveTo(x, y); }, line_to(x, y) { c.lineTo(x, y); },
+    close_path() { c.closePath(); }, fill() { c.fill(); c.beginPath(); }, stroke() { c.stroke(); c.beginPath(); },
+    set_line_width(w) { c.lineWidth = w; },
+    select_font_face(f) { font = f; }, set_font_size(s) { size = s; },
+    _f() { return `${/Bold/.test(font) ? 700 : 400} ${size}px "Ableton Sans Small"`; },
+    text_measure(s) { c.font = this._f(); return [c.measureText(s).width, size]; },
+    show_text(s) { c.font = this._f(); c.textAlign = "left"; c.textBaseline = "alphabetic"; c.save(); c.setTransform(1,0,0,1,0,0); c.fillText(s, this._x, this._y); c.restore(); },
+  };
+}
+async function run() {
+  await document.fonts.load(`10px "Ableton Sans Small"`);
+  [S.themes, S.reg] = await Promise.all(["themes.json", "registry.json"].map(u => fetch(u).then(r => r.json())));
+  S.reg.forEach(e => (S.byCat[e.category] = S.byCat[e.category] || []).push(e));
+  const cats = Object.keys(S.byCat).sort();
+  await Promise.all(cats.map(c => new Promise(res => { const el = document.createElement("script");
+    el.src = `designs/${encodeURIComponent(c)}.js`; el.onload = el.onerror = res; document.body.appendChild(el); })));
+  const only = new URLSearchParams(location.search).get("cat");
+  const lines = [];
+  let worst = 0;
+  for (const cat of cats) {
+    if (only && cat !== only) continue;
+    const D = DESIGNS[cat]; if (!D) continue;
+    for (const o of D.options) {
+      const W = o.width, H = HEAD_H + DEVICE_H;
+      const mk = () => { const cv = document.createElement("canvas"); cv.width = W; cv.height = H; return cv; };
+      const a = mk(), b = mk();
+      const eff = S.reg.find(e => e.name === D.effect);
+      const ps = eff.params.map((p, i) => ({ ...p, _i: i })), vals = ps.map(p => p.default);
+      S.theme = "dark"; S.cat = cat; S.effName = eff.name;
+      const th = tok();
+      // same simulated state for both renders
+      const sim = () => { const st = newState(); for (let k = 0; k < 600; k++) { st.t += 1 / 120; o.step(st, 1 / 120); } return st; };
+      const draw = c => { const s2 = sim(); header(c, th, W, `Airwindows ${cat}`); o.draw(c, th, s2, ps, vals); };
+      draw(a.getContext("2d"));
+      const bc = b.getContext("2d"), mg = fakeMg(bc);
+      // show_text needs the current point: track it
+      const mv = mg.move_to; mg.move_to = (x, y) => { mg._x = x; mg._y = y; mv(x, y); };
+      draw(makeCanvas(mg, { font: "Ableton Sans Medium", boldFont: "Ableton Sans Bold" }));
+      const da = a.getContext("2d").getImageData(0, 0, W, H).data, db = bc.getImageData(0, 0, W, H).data;
+      let diff = 0;
+      for (let i = 0; i < da.length; i += 4)
+        if (Math.abs(da[i] - db[i]) + Math.abs(da[i + 1] - db[i + 1]) + Math.abs(da[i + 2] - db[i + 2]) > 48) diff++;
+      const pct = 100 * diff / (W * H);
+      worst = Math.max(worst, pct);
+      lines.push(`${pct.toFixed(2).padStart(6)}%  ${cat} ${o.id}`);
+      if (only) { const p = document.getElementById("pics"); p.appendChild(a); p.appendChild(b); }
+    }
+  }
+  lines.sort().reverse();
+  document.getElementById("out").textContent = `worst ${worst.toFixed(2)}%\n` + lines.join("\n");
+}
+run().catch(e => document.getElementById("out").textContent = "ERROR " + e.stack);
+</script>
+</body></html>

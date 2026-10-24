@@ -1,0 +1,198 @@
+// Clipping: design options. Own helpers live inside this IIFE; shared helpers come from app.js.
+(function () {
+  const TAU = Math.PI * 2;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const GREY = () => (S.theme === "light" ? "#5e5e5e" : "#3a3a3a");
+  // nominal drive 0..1 from the generic dial values (the real device measures in vs out instead)
+  const drive = vals => (vals.length ? 0.25 + 0.5 * clamp(vals.reduce((a, b) => a + b, 0) / vals.length, 0, 1) : 0.5);
+  const sigAt = (ph, a) => a * (0.78 * Math.sin(TAU * ph) + 0.22 * Math.sin(TAU * 3 * ph + 0.6));
+  // st.inL / st.outL: held peaks in dB with 24 dB/s release. st.f (set by model) is the measured in->out map.
+  function step(st, dt) {
+    const d = drums(st.t), a = 0.08 + d.env * 0.82, f = st.f || (x => shape(x, 0.5));
+    st.a = a;
+    st.inL = Math.max(db(a), st.inL - 24 * dt);
+    st.outL = Math.max(db(Math.abs(f(a)) + 1e-4), st.outL - 24 * dt);
+    st.aPk = Math.pow(10, st.inL / 20); st.aV = Math.min(0.95, st.aPk);   // held peak drives the scope so it stays readable
+    st.gr = Math.max(Math.max(0, db(a) - db(Math.abs(f(a)) + 1e-4)), (st.gr || 0) - 24 * dt);
+    st.hist.push({ a }); if (st.hist.length > 700) st.hist.shift();
+  }
+  // model: f = measured in->out sample map, plus level numbers derived from it
+  function model(st, vals) {
+    const d = drive(vals), f = x => shape(x, d), ceil = ceilOf(d);
+    st.f = f;
+    const inL = Math.max(-60, st.inL), outL = Math.max(-60, st.outL);
+    let clipped = 0; const N = 64;
+    for (let i = 0; i < N; i++) if (ceil && Math.abs(f(sigAt(i / N, st.aV))) >= ceil - 1e-6) clipped++;
+    const dtm = st.t - (st.tm === undefined ? st.t : st.tm); st.tm = st.t;
+    st.clipP = Math.max(100 * clipped / N, (st.clipP || 0) - 100 * Math.max(0, dtm));   // clip lamp holds ~1 s
+    return { d, f, ceil, st, inL, outL, diff: outL - inL, gr: st.gr || 0, clipPct: st.clipP };
+  }
+  const box = (c, th, x, y, w, h, title, right) => {
+    rr(c, x, y, w, h, 3, th.display);
+    if (title) txt(c, x + 6, y + 11, title, { color: th.scale, align: "left" });
+    if (right) txt(c, x + w - 6, y + 11, right, { color: th.orange, align: "right" });
+  };
+  function dials(c, th, ps, area, cols, vals, cw) {
+    if (!ps.length) { txt(c, area.x + area.w / 2, area.y + area.h / 2 + 3, "No controls", { color: th.dim }); return; }
+    const rows = Math.ceil(ps.length / cols);
+    if (rows < 2 || area.h / rows < 48) { knobGrid(c, th, ps, area, cols, vals, cw); return; }
+    // one knobGrid call per row, so rows keep their own breathing room
+    const rh = Math.min(58, area.h / rows), y0 = area.y + (area.h - rows * rh) / 2;
+    for (let r = 0; r < rows; r++) knobGrid(c, th, ps.slice(r * cols, (r + 1) * cols), { x: area.x, y: y0 + r * rh, w: area.w, h: rh }, cols, vals, cw);
+  }
+  // In / Out / Diff as label + value pairs; each pair starts after the width of the one before it
+  const readouts = (c, th, x, y, m) => {
+    const items = [["In", m.inL.toFixed(1), th.cyan], ["Out", m.outL.toFixed(1), th.cyan], ["Diff", `${m.diff >= 0 ? "+" : ""}${m.diff.toFixed(1)} dB`, th.orange]];
+    c.font = `400 9.5px ${FONT}`;
+    const vw = c.measureText("-60.0 dB").width, lws = items.map(it => c.measureText(it[0]).width);
+    const total = items.reduce((t, it, i) => t + lws[i] + 4 + vw + 8, 0);
+    rr(c, x - 5, y - 11, total + 2, 15, 2, th.display);   // dark chip so the numbers read in both themes
+    let cx = x;
+    items.forEach(([l, v, col], i) => {
+      txt(c, cx, y, l, { color: th.dispText, align: "left" });
+      txt(c, cx + lws[i] + 4, y, v, { color: col, align: "left" });
+      cx += lws[i] + 4 + vw + 8;
+    });
+  };
+  // transfer curve measured as output sample vs input sample; orange dot = live input peak
+  function transferPanel(c, th, x, y, w, h, m, title, right) {
+    box(c, th, x, y, w, h, title, right);
+    const s = Math.min(w - 12, h - 20), px = x + (w - s) / 2, py = y + 16 + (h - 20 - s) / 2;
+    const X = v => px + (clamp(v, -1.1, 1.1) + 1.1) / 2.2 * s, Y = v => py + s - (clamp(v, -1.1, 1.1) + 1.1) / 2.2 * s;
+    const a = Math.min(1, m.st.aPk);
+    c.fillStyle = th.cyan + "33"; c.fillRect(X(-a), py, X(a) - X(-a), s);
+    c.fillStyle = th.dline; c.fillRect(px, py + s / 2, s, 1); c.fillRect(px + s / 2, py, 1, s);
+    c.strokeStyle = th.scale; c.lineWidth = 1; c.beginPath(); c.moveTo(X(-1), Y(-1)); c.lineTo(X(1), Y(1)); c.stroke();
+    c.strokeStyle = th.cyan; c.lineWidth = 2; c.beginPath();
+    for (let i = 0; i <= 48; i++) { const v = -1.1 + i / 48 * 2.2; i ? c.lineTo(X(v), Y(m.f(v))) : c.moveTo(X(v), Y(m.f(v))); }
+    c.stroke();
+    if (m.ceil) { c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath(); c.moveTo(px, Y(m.ceil)); c.lineTo(px + s, Y(m.ceil)); c.moveTo(px, Y(-m.ceil)); c.lineTo(px + s, Y(-m.ceil)); c.stroke(); }
+    c.fillStyle = th.orange; c.beginPath(); c.arc(X(a), Y(m.f(a)), 3, 0, TAU); c.fill();
+    txt(c, px + 3, py + 9, "Out", { color: th.dispText, size: 8.5, align: "left" });
+    txt(c, px + s - 3, py + s / 2 - 3, "In", { color: th.dispText, size: 8.5, align: "right" });
+  }
+  // zoomed oscilloscope: input (grey), output (cyan), difference filled orange
+  function scopePanel(c, th, x, y, w, h, m, title, right) {
+    box(c, th, x, y, w, h, title, right);
+    const px = x + 4, pw = w - 8, py = y + 16, ph = h - 20, mid = py + ph / 2, amp = ph / 2 / 1.1;
+    const ph0 = m.st.t * 0.35, n = Math.max(8, Math.floor(pw / 2));
+    c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
+    c.fillStyle = th.dline; c.fillRect(px, mid, pw, 1);
+    if (m.ceil) { c.fillRect(px, mid - m.ceil * amp, pw, 1); c.fillRect(px, mid + m.ceil * amp, pw, 1); }
+    const xi = [], yo = [];
+    for (let i = 0; i <= n; i++) { const v = sigAt(ph0 + i / n * 2, m.st.aV); xi.push(v); yo.push(m.f(v)); }
+    c.fillStyle = th.orange + "55"; c.beginPath();
+    for (let i = 0; i <= n; i++) { const X = px + i / n * pw; i ? c.lineTo(X, mid - yo[i] * amp) : c.moveTo(X, mid - yo[i] * amp); }
+    for (let i = n; i >= 0; i--) c.lineTo(px + i / n * pw, mid - xi[i] * amp);
+    c.fill();
+    c.strokeStyle = S.theme === "light" ? "#9a9a9a" : "#6a6a6a"; c.lineWidth = 1; c.beginPath();
+    xi.forEach((v, i) => { const X = px + i / n * pw; i ? c.lineTo(X, mid - v * amp) : c.moveTo(X, mid - v * amp); }); c.stroke();
+    c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
+    yo.forEach((v, i) => { const X = px + i / n * pw; i ? c.lineTo(X, mid - v * amp) : c.moveTo(X, mid - v * amp); }); c.stroke();
+    if (m.ceil) { c.fillStyle = th.orange; yo.forEach((v, i) => { if (Math.abs(v) >= m.ceil - 1e-6) c.fillRect(px + i / n * pw - 1, mid - v * amp - 1, 2, 2); }); }
+    c.restore();
+  }
+  // FFT-style harmonic display: input spectrum (grey), output (cyan), content the effect ADDED (orange)
+  function specPanel(c, th, x, y, w, h, m, title) {
+    box(c, th, x, y, w, h, title);
+    const px = x + 22, pw = w - 28, py = y + 16, ph = h - 30, K = 24, N = 64;
+    const inS = [], outS = [];
+    for (let i = 0; i < N; i++) { const v = sigAt(i / N, m.st.aV); inS.push(v); outS.push(m.f(v)); }
+    const mag = (arr, k) => { let re = 0, im = 0; for (let i = 0; i < N; i++) { re += arr[i] * Math.cos(TAU * k * i / N); im -= arr[i] * Math.sin(TAU * k * i / N); } return Math.hypot(re, im) * 2 / N; };
+    const lx = k => Math.log(k) / Math.log(K), yy = d => py + ph * clamp(-d / 72, 0, 1);
+    [0, -24, -48, -72].forEach(g => { c.fillStyle = th.dline; c.fillRect(px, yy(g), pw, 1); txt(c, x + 18, yy(g) + 3, String(g), { color: th.scale, size: 8, align: "right" }); });
+    let added = 0, fund = 0;
+    for (let k = 1; k <= K; k++) {
+      const mi = mag(inS, k), mo = mag(outS, k), di = db(mi), dout = db(mo + 1e-4);
+      const x0 = px + lx(k - 0.4 < 1 ? 1 : k - 0.4) * pw, x1 = px + lx(k + 0.4) * pw, bw = Math.max(2, x1 - x0 - 1);
+      if (k === 1 || k === 3) fund += mi * mi; else added += mo * mo;
+      if (di > -70) { c.fillStyle = GREY(); c.fillRect(x0, yy(di), bw, py + ph - yy(di)); }
+      c.fillStyle = di < -60 && dout > -70 ? th.orange : th.cyan; c.fillRect(x0 + (bw > 3 ? 1 : 0), yy(dout), Math.max(1.5, bw - 2), py + ph - yy(dout));
+    }
+    [[1, "110"], [3, "330"], [9, "1k"], [24, "2.6k"]].forEach(([k, s]) => txt(c, px + lx(k) * pw, y + h - 3, s, { color: th.scale, size: 8, align: k === 24 ? "right" : "center" }));
+    m.added = 100 * Math.sqrt(added / Math.max(fund, 1e-6));
+    txt(c, x + w - 6, y + 11, `Added ${m.added.toFixed(1)} %`, { color: th.orange, align: "right" });
+  }
+  // scrolling level history: input (grey), output (cyan line), difference between them (orange)
+  function histPanel(c, th, x, y, w, h, m, title, right) {
+    box(c, th, x, y, w, h, title, right);
+    const px = x + 4, pw = w - 8, py = y + 16, ph = h - 20, hs = m.st.hist, n = Math.min(hs.length, pw);
+    const Y = d => py + ph * clamp(-d / 40, 0, 1), top = (e, o) => Y(db((o ? Math.abs(m.f(e.a)) : e.a) + 0.005));
+    c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
+    [-10, -20, -30].forEach(g => { c.fillStyle = th.dline; c.fillRect(px, Y(g), pw, 1); });
+    c.fillStyle = GREY(); c.beginPath(); c.moveTo(px + pw, py + ph);
+    for (let i = 0; i < n; i++) c.lineTo(px + pw - i, top(hs[hs.length - 1 - i], false)); c.lineTo(px + pw - n, py + ph); c.fill();
+    c.fillStyle = th.orange + "88"; c.beginPath();
+    for (let i = 0; i < n; i++) { const yy = top(hs[hs.length - 1 - i], true); i ? c.lineTo(px + pw - i, yy) : c.moveTo(px + pw - i, yy); }
+    for (let i = n - 1; i >= 0; i--) c.lineTo(px + pw - i, top(hs[hs.length - 1 - i], false)); c.fill();
+    c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
+    for (let i = 0; i < n; i++) { const yy = top(hs[hs.length - 1 - i], true); i ? c.lineTo(px + pw - i, yy) : c.moveTo(px + pw - i, yy); } c.stroke();
+    c.restore();
+    txt(c, px + 2, py + ph - 3, "-40 dB", { color: th.scale, size: 8, align: "left" });
+  }
+  // horizontal gain-change bar: centre = 0 dB, orange right = louder out, left = quieter out
+  function diffBar(c, th, x, y, w, m, label) {
+    txt(c, x, y + 9, label, { color: th.text, align: "left" });
+    const bx = x + 44, bw = w - 44 - 40;
+    rr(c, bx, y + 1, bw, 9, 2, th.meterBg);
+    const v = clamp(m.diff / 12, -1, 1), cx = bx + bw / 2;
+    c.fillStyle = th.orange; c.fillRect(Math.min(cx, cx + v * bw / 2), y + 1, Math.abs(v) * bw / 2, 9);
+    c.fillStyle = th.text; c.fillRect(cx, y, 1, 11);
+    txt(c, x + w, y + 9, `${m.diff >= 0 ? "+" : ""}${m.diff.toFixed(1)}`, { color: th.text, align: "right" });
+  }
+  const M = (c, th, x, y, w, name) => { menu(c, th, x, y, w, name); arrows(c, th, x + w + 4, y); };
+  const GX = W => W - GAIN_W - 4;
+
+  const ceilOf = d => 0.85 - 0.7 * d;
+  const shape = (x, d) => clamp(x * (1 + 1.5 * d), -ceilOf(d), ceilOf(d));
+  const NAME = "ADClip9", Y0 = HEAD_H;
+  const lamp = (c, th, x, y, w, m) => toggle(c, th, x, y, w, `Clip ${m.clipPct.toFixed(0)}%`, m.clipPct > 0);
+  const clipBar = (c, th, x, y, w, m) => {
+    txt(c, x, y + 9, "Clipped", { color: th.text, align: "left" });
+    rr(c, x + 44, y + 1, w - 44 - 34, 9, 2, th.meterBg);
+    c.fillStyle = th.orange; c.fillRect(x + 44, y + 1, (w - 78) * m.clipPct / 100, 9);
+    txt(c, x + w, y + 9, `${m.clipPct.toFixed(0)}%`, { color: th.text, align: "right" });
+  };
+  DESIGNS["Clipping"] = {
+    effect: "ADClip9",
+    refs: [["LimiterL12.png", "Limiter"], ["CompressorTransferCurveL12.png", "Compressor curve"], ["SaturatorL12.png", "Saturator"]],
+    lead: "Visual cue: where the peaks are being cut — clipped peaks marked on the waveform, and the share of the signal that is clipped, measured live. Every option has the Input / Output gain strip on the right.",
+    options: [
+      { id: "A", name: "Limiter", width: 548, step,
+        why: "Tall level meters in the middle: input on the left, peak reduction on the right, dials at both sides — like Limiter.",
+        bullets: ["Input meters and orange peak-reduction bars (input dB minus output dB)", "Clip lamp lights when output samples sit at the ceiling", "Dials split on both sides of the meters; gain strip at the right edge"],
+        draw(c, th, st, ps, vals) {
+          const m = model(st, vals);
+          M(c, th, 6, Y0 + 4, 120, NAME); lamp(c, th, 6, Y0 + 22, 80, m);
+          const half = Math.ceil(ps.length / 2);
+          dials(c, th, ps.slice(0, half), { x: 4, y: Y0 + 40, w: 150, h: DEVICE_H - 44 }, 2, vals, 60);
+          limiterMeters(c, th, 160, Y0 + 6, 150, DEVICE_H - 12, { inL: m.inL, gr: m.gr });
+          if (ps.length > half) dials(c, th, ps.slice(half), { x: 316, y: Y0 + 6, w: 160, h: DEVICE_H - 12 }, 2, vals, 60);
+          gainStrip(c, th, GX(548), st);
+        } },
+      { id: "B", name: "Scope", width: 608, step,
+        why: "A wide waveform display with the ceiling drawn as lines and clipped peaks marked, dials in a row under it.",
+        bullets: ["Zoomed waveform of input vs output; orange fill = peaks removed", "Lines = ceiling seen in the output; dots mark clipped samples", "Clip lamp with the percentage of clipped samples; gain strip at the right edge"],
+        draw(c, th, st, ps, vals) {
+          const m = model(st, vals);
+          M(c, th, 6, Y0 + 4, 110, NAME); readouts(c, th, 170, Y0 + 15, m); lamp(c, th, 446, Y0 + 4, 88, m);
+          scopePanel(c, th, 6, Y0 + 22, 528, 80, m, "Waveform", `Ceiling ${db(m.ceil).toFixed(1)} dB`);
+          dials(c, th, ps, { x: 4, y: Y0 + 104, w: 532, h: 62 }, ps.length || 1, vals, 64);
+          gainStrip(c, th, GX(608), st);
+        } },
+      { id: "C", name: "Curve", width: 568, step,
+        why: "The hard-knee curve and a level history side by side, with a clipped-share bar — like Compressor's curve view.",
+        bullets: ["Transfer curve measured from in vs out: flat top = clipping", "Scrolling history: orange = level removed by the clipper", "Bars: gain change and share of samples clipped; gain strip at the right edge"],
+        draw(c, th, st, ps, vals) {
+          const m = model(st, vals);
+          M(c, th, 6, Y0 + 4, 120, NAME);
+          transferPanel(c, th, 6, Y0 + 22, 150, 104, m, "Curve");
+          histPanel(c, th, 162, Y0 + 22, 170, 104, m, "Level");
+          diffBar(c, th, 8, Y0 + 130, 148, m, "Gain Δ"); clipBar(c, th, 8, Y0 + 146, 148, m);
+          readouts(c, th, 164, Y0 + 142, m);
+          dials(c, th, ps, { x: 340, y: Y0 + 4, w: 156, h: DEVICE_H - 8 }, 3, vals, 52);
+          gainStrip(c, th, GX(568), st);
+        } },
+    ],
+  };
+})();
