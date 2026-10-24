@@ -84,6 +84,9 @@ function refresh() {
     const idx = menuIndex();
     log("refresh", idx, NAMES[idx]);
     outlet(0, "algokeep", NAMES[idx]);
+    // From now on a menu change is the user's (or a restore, which Live does menu-first
+    // because of parameter_order), so it loads the effect's defaults.
+    ready = true;
 }
 
 function bang() {
@@ -146,7 +149,8 @@ function display(i, s) {
 }
 
 function pvalue(i, v) { script("sendbox", "dial" + i, "set", v); }
-function what(s) { script("sendbox", "what", "set", s); }
+// as separate words, so textedit does not show the symbol's quotes
+function what(s) { script("sendbox", "what", "set", ...String(s).split(" ")); }
 function algo(s) {}
 function category(s) {}
 
@@ -212,17 +216,21 @@ def build(category, names):
                      "parameter_shortname": "Effect", "parameter_type": 2,
                      "parameter_mmax": len(names) - 1, "parameter_initial": [0],
                      "parameter_initial_enable": 1, "parameter_unitstyle": 9,
-                     "parameter_info": "Airwindows effect"}})
+                     "parameter_order": 0, "parameter_info": "Airwindows effect"}})
+    # Live recalls lower parameter_order first: the effect, then the dial values
     p.params[menu] = ["Effect", "Effect", 0]
     arrows = p.box("live.arrows", [360, 20, 40, 15], varname="arrows", numinlets=1,
                    numoutlets=1, outlettype=[""], leftarrow=1, rightarrow=1, uparrow=0,
                    downarrow=0, presentation=1,
                    presentation_rect=[PANEL_X + PANEL_W - 46, PANEL_Y + 3, 40, 14])
-    # live.comment wraps long text inside its rectangle; a plain comment does not after "set"
+    # a read-only textedit always word-wraps inside its rectangle (live.comment only
+    # sometimes re-wraps after "set")
     prect = [PANEL_X + 6, PANEL_Y + 42, PANEL_W - 12, PANEL_H - 46]
-    p.box("live.comment", [prect[0] + 700, prect[1] + 400, prect[2], prect[3]], varname="what",
-          text="", textjustification=0, fontname=FONT, fontsize=FONT_SIZE, textcolor=DIM,
-          numinlets=1, numoutlets=0, presentation=1, presentation_rect=prect)
+    p.box("textedit", [prect[0] + 700, prect[1] + 400, prect[2], prect[3]], varname="what",
+          text="", readonly=1, border=0.0, bgcolor=[0.0, 0.0, 0.0, 0.0], textcolor=DIM,
+          fontname=FONT, fontsize=FONT_SIZE, wordwrap=1, ignoreclick=1, keymode=0,
+          lines=0, numinlets=1, numoutlets=4, outlettype=["", "int", "", ""],
+          presentation=1, presentation_rect=prect)
 
     label(p, "noctl", [GRID_X, DEVICE_H / 2 - 8, GRID_W, 16],
                   text="This effect has no controls", color=DIM)
@@ -258,8 +266,9 @@ def build(category, names):
                          "parameter_longname": long, "parameter_shortname": f"P{k + 1}",
                          "parameter_type": 0, "parameter_mmin": 0.0, "parameter_mmax": 1.0,
                          "parameter_initial_enable": 0, "parameter_unitstyle": 1,
-                         "parameter_linknames": 0, "parameter_modmode": 3}})
-        p.params[dial] = [long, f"P{k + 1}", 0]
+                         "parameter_linknames": 0, "parameter_modmode": 3,
+                         "parameter_order": 1}})
+        p.params[dial] = [long, f"P{k + 1}", 1]
         label(p, f"value{k}", [x0, y0 + 53, SLOT_W, 14])
         prep = p.newobj(f"prepend param {k}", [620 + k * 56, 90, 90, 22], 1, 1, [""])
         p.line(dial, 0, prep, 0)
@@ -314,6 +323,8 @@ def main():
     ap.add_argument("outdir")
     ap.add_argument("--only", help="generate a single category")
     ap.add_argument("--log", default="", help="debug log file for the device JavaScript")
+    ap.add_argument("--order", default=str(Path(__file__).with_name("effect_order.json")),
+                    help="committed menu order per category; new effects are appended")
     a = ap.parse_args()
     global LOG_PATH
     LOG_PATH = a.log
@@ -323,12 +334,25 @@ def main():
     cats = {}
     for e in reg:
         cats.setdefault(e["category"], []).append(e["name"])
+    # Live saves the Effect menu as an index, so an effect must keep its position forever:
+    # existing entries stay in place, new effects go at the end, removed ones are reported.
+    order_path = Path(a.order)
+    order = json.loads(order_path.read_text()) if order_path.exists() else {}
+    for cat, names in cats.items():
+        known = order.get(cat, [])
+        gone = [n for n in known if n not in names]
+        if gone:
+            raise SystemExit(f"{cat}: effects missing from the registry: {gone}; "
+                             "keep them in the menu or bump the device name")
+        order[cat] = known + sorted((n for n in names if n not in known), key=str.lower)
+    order_path.write_text(json.dumps(order, indent=1, sort_keys=True) + "\n")
+
     out = Path(a.outdir)
     out.mkdir(parents=True, exist_ok=True)
-    for cat, names in sorted(cats.items()):
+    for cat in sorted(cats):
         if a.only and cat != a.only:
             continue
-        names = sorted(names, key=str.lower)
+        names = order[cat]
         path = out / f"Airwindows {cat}.amxd"
         path.write_bytes(amxd_bytes(build(cat, names)))
         print(f"{path.name}: {len(names)} effects")

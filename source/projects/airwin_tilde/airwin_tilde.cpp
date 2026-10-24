@@ -27,8 +27,9 @@
 #include <string>
 #include <vector>
 
-static constexpr int kMaxParams = 64;
+static constexpr int kMaxParams = 64; // fits the display-dirty bitmask
 static constexpr int kRetireSlots = 8;
+static constexpr long kChunk = 4096;  // private input copy; longer vectors are processed in chunks
 
 struct FxBox
 {
@@ -49,14 +50,17 @@ struct Impl
     std::atomic<float> params[kMaxParams];
     std::atomic<bool> touched[kMaxParams];
     std::atomic<uint32_t> paramGen{0};
+    std::atomic<uint64_t> displayDirty{0};
+    std::atomic<float> sampleRate{48000.f};
 
     // audio thread
     FxBox *audio{nullptr};
+    float audioRate{0.f};
     float applied[kMaxParams];
     uint32_t appliedGen{0};
     std::vector<double> inL, inR;
 
-    Impl()
+    Impl() : inL(kChunk, 0.0), inR(kChunk, 0.0)
     {
         for (auto &r : retired)
             r.store(nullptr);
@@ -80,7 +84,8 @@ typedef struct _airwin
 {
     t_pxobject ob;
     void *infoOut;
-    void *qelem;
+    void *qelem;     // frees retired effects on the main thread
+    void *displayQ;  // sends value text for changed parameters on the main thread
     Impl *impl;
 } t_airwin;
 
@@ -125,9 +130,11 @@ static void free_retired(t_airwin *x)
         delete r.exchange(nullptr);
 }
 
+// Main thread only.
 static void airwin_load(t_airwin *x, int idx, bool keep)
 {
     Impl *im = x->impl;
+    FxBox *next = make_fx(idx, im->sr);
     im->algo = idx;
     im->ui.reset(make_fx(idx, im->sr));
     FxBox *ui = im->ui.get();
@@ -140,9 +147,11 @@ static void airwin_load(t_airwin *x, int idx, bool keep)
         else
             im->params[i].store(ui->fx->getParameter(i));
     }
-    im->paramGen.fetch_add(1);
 
-    delete im->pending.exchange(make_fx(idx, im->sr));
+    // Publish the new effect before announcing the new values, so the audio thread never
+    // applies them to the previous effect (whose parameter indexes mean something else).
+    delete im->pending.exchange(next);
+    im->paramGen.fetch_add(1);
 }
 
 static void airwin_report(t_airwin *x)
@@ -166,11 +175,20 @@ static void airwin_report(t_airwin *x)
     out_sym(x, "algo", reg.name);
 }
 
+static void airwin_algo(t_airwin *x, t_symbol *s, long ac, t_atom *av);
+
+// defer_low callbacks receive a short argc
+static void airwin_algo_deferred(t_airwin *x, t_symbol *s, short ac, t_atom *av)
+{
+    airwin_algo(x, s, ac, av);
+}
+
 static void airwin_algo(t_airwin *x, t_symbol *s, long ac, t_atom *av)
 {
+    // effect state lives on the main thread; defer_low always queues (defer may not)
     if (!systhread_ismainthread())
     {
-        defer(x, (method)airwin_algo, s, (short)ac, av);
+        defer_low(x, (method)airwin_algo_deferred, s, (short)ac, av);
         return;
     }
     if (ac < 1 || atom_gettype(av) != A_SYM)
@@ -190,6 +208,11 @@ static void airwin_algo(t_airwin *x, t_symbol *s, long ac, t_atom *av)
 
 static void airwin_sync(t_airwin *x)
 {
+    if (!systhread_ismainthread())
+    {
+        defer_low(x, (method)airwin_sync, NULL, 0, NULL);
+        return;
+    }
     Impl *im = x->impl;
     if (!im->ui)
         return;
@@ -199,6 +222,11 @@ static void airwin_sync(t_airwin *x)
 
 static void airwin_reset(t_airwin *x)
 {
+    if (!systhread_ismainthread())
+    {
+        defer_low(x, (method)airwin_reset, NULL, 0, NULL);
+        return;
+    }
     if (x->impl->algo >= 0)
     {
         // keep the current parameter values across the reload
@@ -214,20 +242,23 @@ static void airwin_reset(t_airwin *x)
     }
 }
 
-static void airwin_display(t_airwin *x, t_symbol *, long ac, t_atom *av)
+// qelem callback (main thread): one pass per UI tick however many values changed
+static void airwin_display(t_airwin *x)
 {
-    // main thread only: updates the shadow instance and reports the value text
     Impl *im = x->impl;
-    if (ac < 1 || !im->ui)
+    uint64_t dirty = im->displayDirty.exchange(0);
+    if (!im->ui)
         return;
-    long i = atom_getlong(av);
-    if (i < 0 || i >= im->ui->nParams)
-        return;
-    im->ui->fx->setParameter((int)i, im->params[i].load());
-    out_int_sym(x, "display", i, aw::paramDisplay(im->ui->fx.get(), (int)i));
+    for (int i = 0; i < im->ui->nParams; ++i)
+    {
+        if (!(dirty & (uint64_t(1) << i)))
+            continue;
+        im->ui->fx->setParameter(i, im->params[i].load());
+        out_int_sym(x, "display", i, aw::paramDisplay(im->ui->fx.get(), i));
+    }
 }
 
-static void airwin_param(t_airwin *x, t_symbol *s, long ac, t_atom *av)
+static void airwin_param(t_airwin *x, t_symbol *, long ac, t_atom *av)
 {
     if (ac < 2)
         return;
@@ -239,7 +270,8 @@ static void airwin_param(t_airwin *x, t_symbol *s, long ac, t_atom *av)
     x->impl->params[i].store(v);
     x->impl->touched[i].store(true);
     x->impl->paramGen.fetch_add(1);
-    defer_low(x, (method)airwin_display, s, 1, av);
+    x->impl->displayDirty.fetch_or(uint64_t(1) << i);
+    qelem_set(x->displayQ);
 }
 
 static void airwin_list_algos(t_airwin *x, t_symbol *s, long ac, t_atom *av)
@@ -284,33 +316,44 @@ static void airwin_perform64(t_airwin *x, t_object *, double **ins, long, double
 {
     Impl *im = x->impl;
 
-    if (FxBox *p = im->pending.exchange(nullptr))
-    {
-        FxBox *old = im->audio;
-        im->audio = p;
-        im->appliedGen = im->paramGen.load() - 1;
-        for (auto &a : im->applied)
-            a = NAN;
-        if (old)
+    // Swap in a pending effect only when the old one can be parked for the main thread to
+    // free; otherwise keep the old one for this block. The audio thread never frees memory.
+    std::atomic<FxBox *> *slot = nullptr;
+    for (auto &r : im->retired)
+        if (!r.load())
         {
-            bool parked = false;
-            for (auto &r : im->retired)
+            slot = &r;
+            break;
+        }
+    if (slot || !im->audio)
+    {
+        if (FxBox *p = im->pending.exchange(nullptr))
+        {
+            FxBox *old = im->audio;
+            im->audio = p;
+            im->audioRate = 0.f;
+            im->appliedGen = im->paramGen.load() - 1;
+            for (auto &a : im->applied)
+                a = NAN;
+            if (old)
             {
-                FxBox *expected = nullptr;
-                if (r.compare_exchange_strong(expected, old))
-                {
-                    parked = true;
-                    break;
-                }
+                slot->store(old); // only the audio thread fills slots, so it is still free
+                qelem_set(x->qelem);
             }
-            if (!parked)
-                delete old; // only when eight swaps happen before the main thread runs
-            qelem_set(x->qelem);
         }
     }
 
     FxBox *fx = im->audio;
-    if (!fx || n > (long)im->inL.size())
+    if (fx)
+    {
+        float sr = im->sampleRate.load();
+        if (sr != im->audioRate)
+        {
+            im->audioRate = sr;
+            fx->fx->setSampleRate(sr);
+        }
+    }
+    if (!fx)
     {
         if (outs[0] != ins[0])
             std::copy(ins[0], ins[0] + n, outs[0]);
@@ -336,26 +379,28 @@ static void airwin_perform64(t_airwin *x, t_object *, double **ins, long, double
 
     // Max may hand the same buffer to input and output; Airwindows reads and writes per sample
     // but some effects read ahead, so feed it private copies of the input.
-    std::copy(ins[0], ins[0] + n, im->inL.data());
-    std::copy(ins[1], ins[1] + n, im->inR.data());
-    double *in2[2] = {im->inL.data(), im->inR.data()};
-    fx->fx->processDoubleReplacing(in2, outs, (VstInt32)n);
+    for (long off = 0; off < n; off += kChunk)
+    {
+        long len = (std::min)(kChunk, n - off);
+        std::copy(ins[0] + off, ins[0] + off + len, im->inL.data());
+        std::copy(ins[1] + off, ins[1] + off + len, im->inR.data());
+        double *in2[2] = {im->inL.data(), im->inR.data()};
+        double *out2[2] = {outs[0] + off, outs[1] + off};
+        fx->fx->processDoubleReplacing(in2, out2, (VstInt32)len);
+    }
 }
 
 static void airwin_dsp64(t_airwin *x, t_object *dsp64, short *, double samplerate,
                          long maxvectorsize, long)
 {
+    // The audio thread may still run the old chain: it owns the audio-side effects and its
+    // buffers, so it only receives the new rate through an atomic.
     Impl *im = x->impl;
     im->sr = samplerate;
+    im->sampleRate.store((float)samplerate);
     AirwinConsolidatedBase::defaultSampleRate = (float)samplerate;
-    im->inL.assign((std::max<long>)(maxvectorsize, 4096), 0.0);
-    im->inR.assign((std::max<long>)(maxvectorsize, 4096), 0.0);
-    if (im->audio)
-        im->audio->fx->setSampleRate((float)samplerate);
     if (im->ui)
         im->ui->fx->setSampleRate((float)samplerate);
-    if (FxBox *p = im->pending.load())
-        p->fx->setSampleRate((float)samplerate);
     object_method(dsp64, gensym("dsp_add64"), x, airwin_perform64, 0, NULL);
 }
 
@@ -378,8 +423,10 @@ static void *airwin_new(t_symbol *, long ac, t_atom *av)
     outlet_new((t_object *)x, "signal");
     outlet_new((t_object *)x, "signal");
     x->qelem = qelem_new(x, (method)free_retired);
+    x->displayQ = qelem_new(x, (method)airwin_display);
     x->impl = new Impl();
     x->impl->sr = sys_getsr() > 0 ? sys_getsr() : 48000;
+    x->impl->sampleRate.store((float)x->impl->sr);
     aw::ensureRegistry();
 
     if (ac > 0 && atom_gettype(av) == A_SYM)
@@ -395,6 +442,7 @@ static void airwin_free(t_airwin *x)
 {
     dsp_free((t_pxobject *)x);
     qelem_free(x->qelem);
+    qelem_free(x->displayQ);
     delete x->impl;
 }
 

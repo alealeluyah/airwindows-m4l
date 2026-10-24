@@ -44,6 +44,11 @@ Unofficial. Airwindows is the work of Chris Johnson; this project only wraps it.
   dials hide.
 - Automation lanes are named `Effect` and `Param 1` … `Param 13`, because Live needs fixed
   parameter names.
+- Live restores the effect first and the dial values after it, so a saved set comes back
+  exactly. The menu order of each device is fixed in `tools/effect_order.json`: new
+  Airwindows effects are added at the end, so saved sets never load a different effect.
+- The look follows Ableton's own Max for Live devices: Ableton Sans labels, value text
+  under each dial, previous/next arrows next to the effect menu.
 
 ## Install (macOS, Live 12 Suite or Max for Live)
 
@@ -54,7 +59,8 @@ Unofficial. Airwindows is the work of Chris Johnson; this project only wraps it.
 3. In Live's browser, open *User Library → Presets → Audio Effects → Max Audio Effect →
    Airwindows* and drag a device to a track.
 
-Windows is not built yet.
+Windows: the same, with `airwin~.mxe64`. Download the package for your system from the
+[latest CI run or release](https://github.com/alealeluyah/airwindows-m4l/actions).
 
 ## Build
 
@@ -71,6 +77,14 @@ python3 tools/gen_devices.py build/registry.json devices
 ```
 
 The external is written to `externals/airwin~.mxo` (universal: arm64 and x86_64).
+
+## Verification
+
+`tools/nulltest` (macOS) renders every effect through `airwin~`'s code and through the
+Airwindows Consolidated Audio Unit built from the same airwin2rack commit. The float path
+is bit-identical for 506 of 507 testable effects. The double path, which `airwin~` uses,
+matches for 498; the other 9 differ because Airwindows' own float and double functions
+differ for those effects (details in `tools/nulltest/results_48k.txt`).
 
 ## Licenses
 
