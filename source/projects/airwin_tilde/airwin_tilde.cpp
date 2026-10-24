@@ -115,7 +115,7 @@ static FxBox *make_fx(int idx, double sr)
     auto box = new FxBox();
     box->fx = reg.generator();
     box->fx->setSampleRate((float)sr);
-    box->nParams = std::min(reg.nParams, kMaxParams);
+    box->nParams = (std::min)(reg.nParams, kMaxParams);
     return box;
 }
 
@@ -348,8 +348,8 @@ static void airwin_dsp64(t_airwin *x, t_object *dsp64, short *, double samplerat
     Impl *im = x->impl;
     im->sr = samplerate;
     AirwinConsolidatedBase::defaultSampleRate = (float)samplerate;
-    im->inL.assign(std::max<long>(maxvectorsize, 4096), 0.0);
-    im->inR.assign(std::max<long>(maxvectorsize, 4096), 0.0);
+    im->inL.assign((std::max<long>)(maxvectorsize, 4096), 0.0);
+    im->inR.assign((std::max<long>)(maxvectorsize, 4096), 0.0);
     if (im->audio)
         im->audio->fx->setSampleRate((float)samplerate);
     if (im->ui)
