@@ -17,8 +17,8 @@ Unofficial. Airwindows is the work of Chris Johnson; this project only wraps it.
 | Airwindows Distortion | 14 |
 | Airwindows Dithers | 23 |
 | Airwindows Dynamics | 35 |
-| Airwindows Effects | 28 |
-| Airwindows Filter | 53 |
+| Airwindows Effects | 29 |
+| Airwindows Filter | 54 |
 | Airwindows Lo-Fi | 21 |
 | Airwindows Noise | 9 |
 | Airwindows Reverb | 42 |
@@ -27,12 +27,12 @@ Unofficial. Airwindows is the work of Chris Johnson; this project only wraps it.
 | Airwindows Subtlety | 20 |
 | Airwindows Tape | 12 |
 | Airwindows Tone Color | 17 |
-| Airwindows Unclassified | 2 |
 | Airwindows Utility | 38 |
 | Airwindows XYZ Filters | 24 |
 
 509 effects in total. The categories are Chris Johnson's own, as used by
-[Airwindows Consolidated](https://github.com/baconpaul/airwin2rack).
+[Airwindows Consolidated](https://github.com/baconpaul/airwin2rack), with one change:
+CStrip and Pafnuty ("Unclassified" there) are in Filter and Effects, next to CStrip2 and Pafnuty2.
 
 ## How it works
 

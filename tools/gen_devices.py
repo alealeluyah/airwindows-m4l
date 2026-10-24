@@ -384,6 +384,58 @@ def build(category, names):
     return {"patcher": patcher}
 
 
+# Live 12 browser tags ("Devices" tree) per category. Live reads them from the folder's
+# "Ableton Folder Info" file, the same file it writes when you tag a file yourself.
+D, MM, VE = "Devices|", "Devices|Mixing & Mastering", "Devices|Vintage Emulation"
+TAGS = {
+    "Ambience": [D + "Reverb|Small Reverb", D + "Delay|Modulated Delay", D + "Modulation"],
+    "Amp Sims": [D + "Amp Simulation", D + "Guitar", D + "Distortion"],
+    "Bass": [D + "EQ", MM + "|Instrument Mixing"],
+    "Biquads": [D + "Filter", D + "EQ|Filter EQ"],
+    "Brightness": [D + "EQ", MM],
+    "Clipping": [D + "Distortion", D + "Dynamics", MM + "|Mastering"],
+    "Consoles": [MM, VE],
+    "Distortion": [D + "Distortion"],
+    "Dithers": [D + "Utility", MM + "|Mastering"],
+    "Dynamics": [D + "Dynamics", MM],
+    "Effects": [D + "Modulation", D + "Distortion", D + "Pitch Shift"],
+    "Filter": [D + "Filter", D + "EQ"],
+    "Lo-Fi": [D + "Distortion", VE],
+    "Noise": [D + "Utility", D + "Generative"],
+    "Reverb": [D + "Reverb", D + "Reverb|Large Reverb", D + "Reverb|Special Reverb"],
+    "Saturation": [D + "Distortion", MM],
+    "Stereo": [D + "Spatialization", D + "Utility"],
+    "Subtlety": [MM, D + "Distortion"],
+    "Tape": [VE, D + "Distortion", MM],
+    "Tone Color": [VE, MM, D + "EQ"],
+    "Utility": [D + "Utility"],
+    "XYZ Filters": [D + "Filter"],
+}
+FOLDER_INFO = "dc66a3fa-0fe1-5352-91cf-3ec237e9ee90.xmp"   # Live's fixed name for a folder's own file
+
+
+def folder_info(cats):
+    from xml.sax.saxutils import escape
+    items = "".join(
+        '               <rdf:li rdf:parseType="Resource">\n'
+        f"                  <ablFR:filePath>{escape(f'Airwindows {c}.amxd')}</ablFR:filePath>\n"
+        "                  <ablFR:keywords>\n                     <rdf:Bag>\n"
+        + "".join(f"                        <rdf:li>{escape(t)}</rdf:li>\n" for t in TAGS[c])
+        + "                     </rdf:Bag>\n                  </ablFR:keywords>\n               </rdf:li>\n"
+        for c in cats)
+    return ('<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">\n'
+            '   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+            '      <rdf:Description rdf:about=""\n'
+            '            xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+            '            xmlns:ablFR="https://ns.ableton.com/xmp/fs-resources/1.0/">\n'
+            "         <dc:format>application/vnd.ableton.folder</dc:format>\n"
+            "         <ablFR:resource>folder</ablFR:resource>\n"
+            "         <ablFR:platform>mac</ablFR:platform>\n"
+            "         <ablFR:items>\n            <rdf:Bag>\n" + items +
+            "            </rdf:Bag>\n         </ablFR:items>\n"
+            "      </rdf:Description>\n   </rdf:RDF>\n</x:xmpmeta>\n")
+
+
 def amxd_bytes(patch):
     body = json.dumps(patch, indent="\t").encode("utf-8") + b"\n\x00"
     return (b"ampf" + struct.pack("<I", 4) + b"aaaa" + b"meta" + struct.pack("<I", 4)
@@ -437,6 +489,14 @@ def main():
         path = out / f"Airwindows {cat}.amxd"
         path.write_bytes(amxd_bytes(build(cat, names)))
         print(f"{path.name}: {len(names)} effects")
+    if not a.only:
+        missing = sorted(set(cats) - set(TAGS))
+        if missing:
+            raise SystemExit(f"no browser tags for: {missing} (add them to TAGS)")
+        info = out / "Ableton Folder Info"
+        info.mkdir(exist_ok=True)
+        (info / FOLDER_INFO).write_text(folder_info(sorted(cats)), encoding="utf-8")
+        print(f"tags: {info.name}/{FOLDER_INFO}")
 
 
 if __name__ == "__main__":

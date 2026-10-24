@@ -260,7 +260,8 @@
   "TakeCare",
   "Tremolo",
   "TremoSquare",
-  "Trianglizer"
+  "Trianglizer",
+  "Pafnuty"
  ],
  "Filter": [
   "AngleEQ",
@@ -315,7 +316,8 @@
   "Suzan",
   "TapeFat",
   "ToneSlant",
-  "Weight"
+  "Weight",
+  "CStrip"
  ],
  "Lo-Fi": [
   "Bite",
@@ -483,10 +485,6 @@
   "Neverland",
   "Precious",
   "WoodenBox"
- ],
- "Unclassified": [
-  "CStrip",
-  "Pafnuty"
  ],
  "Utility": [
   "Balanced",

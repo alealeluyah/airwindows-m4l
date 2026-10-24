@@ -45,6 +45,15 @@ static std::string json_escape(const std::string &s)
     return o;
 }
 
+// Airwindows files these two as "Unclassified". Put them with their newer versions
+// (CStrip2 is in Filter, Pafnuty2 in Effects), so no device is named "Unclassified".
+static std::string deviceCategory(const std::string &name, const std::string &category)
+{
+    if (name == "CStrip") return "Filter";
+    if (name == "Pafnuty") return "Effects";
+    return category;
+}
+
 static int dump()
 {
     aw::ensureRegistry();
@@ -55,7 +64,7 @@ static int dump()
         const auto &r = AirwinRegistry::registry[idx];
         auto fx = r.generator();
         printf("%s  {\"name\": \"%s\", \"category\": \"%s\", \"what\": \"%s\", \"collections\": [",
-               first ? "" : ",\n", json_escape(r.name).c_str(), json_escape(r.category).c_str(),
+               first ? "" : ",\n", json_escape(r.name).c_str(), json_escape(deviceCategory(r.name, r.category)).c_str(),
                json_escape(r.whatText).c_str());
         for (size_t c = 0; c < r.collections.size(); ++c)
             printf("%s\"%s\"", c ? ", " : "", json_escape(r.collections[c]).c_str());
