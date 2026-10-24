@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airwindows M4L — Design Review</title>
+<style>
+  @font-face { font-family: "Ableton Sans Small"; src: url(fonts/AbletonSansSmall-Regular.ttf); }
+  @font-face { font-family: "Ableton Sans Small"; font-weight: 700; src: url(fonts/AbletonSansSmall-Bold.ttf); }
+  :root {
+    --bg: #1b1b1b; --panel: #242424; --line: #363636; --text: #d6d6d6; --dim: #8a8a8a;
+    --accent: #ffad56; --cyan: #03c3d5; --ok: #6fcf72;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 "Ableton Sans Small", -apple-system, system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; display: flex; gap: 16px; align-items: center;
+           padding: 10px 20px; background: #141414; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 700; }
+  header .sp { flex: 1; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .seg button { background: transparent; color: var(--dim); border: 0; padding: 4px 10px; cursor: pointer; font: inherit; }
+  .seg button.on { background: var(--accent); color: #111; }
+  main { display: grid; grid-template-columns: 230px 1fr; min-height: calc(100vh - 46px); }
+  nav { border-right: 1px solid var(--line); padding: 12px 0; overflow-y: auto; }
+  nav a { display: flex; justify-content: space-between; padding: 5px 18px; color: var(--text); text-decoration: none; }
+  nav a:hover { background: var(--panel); }
+  nav a.on { background: #2e2e2e; color: #fff; }
+  nav .st { font-size: 12px; color: var(--dim); }
+  nav .st.ok { color: var(--ok); }
+  nav h3 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin: 14px 18px 4px; }
+  section.page { padding: 18px 28px 60px; max-width: 1500px; }
+  h2 { margin: 0 0 4px; font-size: 22px; }
+  .lead { color: var(--dim); margin: 0 0 18px; max-width: 900px; }
+  h4 { margin: 26px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+  .refs { display: flex; gap: 14px; flex-wrap: wrap; }
+  .refs figure { margin: 0; }
+  .refs img { height: 150px; border-radius: 4px; display: block; }
+  .refs figcaption { font-size: 12px; color: var(--dim); margin-top: 4px; }
+  .current img { width: 522px; border-radius: 3px; display: block; }
+  .opt { margin-top: 18px; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+  .opt.chosen { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok) inset; }
+  .opt .top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .opt .top b { font-size: 16px; }
+  .opt .top .why { color: var(--dim); flex: 1 1 400px; }
+  .opt canvas { display: block; border-radius: 2px; }
+  .opt .ctl { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .opt select { background: #1a1a1a; color: var(--text); border: 1px solid var(--line); padding: 3px 6px; font: inherit; }
+  .opt ul { margin: 8px 0 0 18px; padding: 0; color: var(--dim); }
+  .btn { background: #2f2f2f; color: var(--text); border: 1px solid #444; border-radius: 4px; padding: 6px 14px; cursor: pointer; font: inherit; }
+  .btn.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 700; }
+  .btn.primary.done { background: var(--ok); border-color: var(--ok); }
+  textarea { width: 100%; max-width: 900px; min-height: 70px; background: #151515; color: var(--text);
+             border: 1px solid var(--line); border-radius: 4px; padding: 8px; font: inherit; }
+  .saved { color: var(--ok); margin-left: 10px; font-size: 13px; }
+  .scroll { overflow-x: auto; padding-bottom: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Airwindows M4L — Design Review</h1>
+  <span class="sp"></span>
+  <span style="color:var(--dim)">Live theme</span>
+  <div class="seg" id="theme"><button data-t="dark" class="on">Dark</button><button data-t="light">Light</button></div>
+  <span style="color:var(--dim)">Zoom</span>
+  <div class="seg" id="zoom"><button data-z="1">100%</button><button data-z="1.5">150%</button><button data-z="2" class="on">200%</button></div>
+</header>
+<main>
+  <nav id="nav"></nav>
+  <section class="page" id="page"></section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
