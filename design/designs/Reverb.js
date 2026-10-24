@@ -22,8 +22,9 @@ DESIGNS["Reverb"] = {
         why: "Everything in one display: the waveform on top, and each control as a draggable coloured readout under it — Hybrid Reverb's display row.",
         bullets: ["Values are click-and-drag numbers (live.numbox), no dials", "Cyan readouts, grey labels, as in Hybrid Reverb", "Most compact: fits 13 controls in two rows"],
         draw(c, th, st, ps, vals) {
-          const dx = 6, dy = HEAD_H + 6, dw = 556, dh = DEVICE_H - 12;
-          rr(c, dx, dy, dw, dh, 3, th.display);
+          const dx = 4, dy = HEAD_H + 4, dw = 562, dh = DEVICE_H - 8;
+          screen(c, th, dx, dy, dw, dh);
+          strip(c, th, dx, dy, dw, 22);
           // output (reverb) translucent behind, dry input on top: the tail shows where orange outlasts grey
           const dryCol = S.theme === "light" ? "#5e5e5eb3" : "#8a8a8ab3";
           waveScroll(c, th, dx + 4, dy + 22, dw - 8, 78, st.hist, "wet", th.orange + "73");
@@ -32,7 +33,7 @@ DESIGNS["Reverb"] = {
           menu(c, th, dx + 6, dy + 5, 110, "Galactic3"); arrows(c, th, dx + 120, dy + 5);
           legend(c, th, dx + dw - 150, dy + 14, [[dryCol, "Dry input", "The signal going into the reverb."],
                                                  [th.orange, "Output (wet)", "The output with the reverb tail."]]);
-          c.fillStyle = th.dline; c.fillRect(dx + 8, dy + 106, dw - 16, 1);
+          strip(c, th, dx, dy + 106, dw, 0, true);
           const cw = (dw - 16) / Math.min(7, ps.length);
           ps.forEach((p, i) => {
             const x = dx + 8 + (i % 7) * cw + cw / 2, y = dy + 122 + Math.floor(i / 7) * 30;
@@ -45,16 +46,17 @@ DESIGNS["Reverb"] = {
         why: "Shows the shape of the tail (early reflections, then decay) with an estimated decay time, next to the dials.",
         bullets: ["Decay curve with time axis and ≈ decay time", "Selector panel on the left (as today)", "Dials in a grid on the right"],
         draw(c, th, st, ps, vals) {
-          rr(c, 4, HEAD_H + 4, 130, DEVICE_H - 8, 6, th.panel);
+          tile(c, th, 4, HEAD_H + 4, 130, DEVICE_H - 8);
           txt(c, 10, HEAD_H + 16, "Reverb", { color: th.dim, align: "left" });
           menu(c, th, 10, HEAD_H + 22, 118, "Galactic3"); arrows(c, th, 98, HEAD_H + 5);
           c.font = `400 9.5px ${FONT}`; c.fillStyle = th.dim; c.textAlign = "left";
           wrapText(c, 10, HEAD_H + 54, 118, S.effWhat, { color: th.dim, maxLines: 7 });
-          decayMap(c, th, 140, HEAD_H + 6, 210, DEVICE_H - 12, st);
+          decayMap(c, th, 136, HEAD_H + 4, 214, DEVICE_H - 8, st);
+          tile(c, th, 352, HEAD_H + 4, 206, DEVICE_H - 8);
           hint(140, HEAD_H + 20, 210, DEVICE_H - 40, "Decay", "Output level over the last 3 seconds (top = 0 dB, bottom = -60 dB). A long, slow slope means a long reverb tail.");
           hint(290, HEAD_H + 6, 60, 14, "Decay Time", "Estimated time for the tail to fall 60 dB: 3 x the time it takes to fall 20 dB after its loudest point. \"> 3 s\" means longer than the window.");
           legend(c, th, 190, HEAD_H + 17, [[th.cyan, "Output level", "Output level in dB over time."]], { line: true });
-          knobGrid(c, th, ps, { x: 354, y: HEAD_H + 4, w: 202, h: DEVICE_H - 8 }, 3, vals);
+          knobGrid(c, th, ps, { x: 352, y: HEAD_H + 4, w: 206, h: DEVICE_H - 8 }, 3, vals);
           gainStrip(c, th, 628 - GAIN_W - 4, st);
         } },
     ],

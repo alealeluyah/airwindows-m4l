@@ -80,7 +80,36 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-function anything() {} // category, pvalue, …: not needed for drawing
+// live.colors "getall": one message per theme colour ("live_surface_bg r g b a")
+const LIVE_COLORS = {};
+function anything() {
+  const n = messagename;
+  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
+  LIVE_COLORS[n] = arrayfromargs(arguments);
+  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
+  liveTheme();
+}
+// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+const LIVE_MAP = {
+  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
+  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+};
+const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
+let themeTask = null;
+function liveTheme() {
+  // the colours arrive as a burst of messages: apply once, after the burst
+  if (themeTask) return;
+  themeTask = new Task(function () {
+    themeTask = null;
+    const L = {};
+    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
+    S.live = L;
+    mgraphics.redraw();
+  });
+  themeTask.schedule(20);
+}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -196,6 +225,7 @@ function paint() {
   const th = tok();
   try {
     S.hints = [];
+    c.fillStyle = th.gutter; c.fillRect(0, HEAD_H, OPT.width, DEVICE_H);   // gutters (RUBRIC 1.1)
     OPT.draw(c, th, st, params, params.map(() => 0.5));
     hints = S.hints;
   } catch (e) {
@@ -207,4 +237,4 @@ function paint() {
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
+function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

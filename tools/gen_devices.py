@@ -262,8 +262,8 @@ def build(category, names):
     p.line(thisdev, 0, meter, 0)
     p.line(meter, 0, aw, 0)
 
-    # Live theme: dark or light, from the control background colour
-    colq = p.box("message", [600, 260, 100, 22], text="live_control_bg", numinlets=2, numoutlets=1, outlettype=[""])
+    # Live theme: every theme colour (live.colors getall), again when the theme changes
+    colq = p.box("message", [600, 260, 100, 22], text="getall", numinlets=2, numoutlets=1, outlettype=[""])
     colors = p.newobj("live.colors", [600, 290, 70, 22], 1, 2, ["", "bang"])
     p.line(lb, 0, colq, 0)
     p.line(thisdev, 0, colq, 0)

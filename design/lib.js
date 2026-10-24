@@ -18,16 +18,40 @@ const HEAD_H = 18;      // device title bar
 function tok() {
   const t = S.themes[S.theme];
   const light = S.theme === "light";
-  return {
-    body: t.DetailViewBackground, text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
+  const th = {
+    // structure (design/RUBRIC.md): tiles on a lighter background, 2 px gutters between them
+    gutter: t.SurfaceHighlight, tile: t.SurfaceBackground, divider: light ? "#8a8a8a" : "#262626",
+    body: t.SurfaceHighlight, panel: t.SurfaceBackground,
+    text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
     display: t.RetroDisplayBackground, dline: t.RetroDisplayBackgroundLine,
     orange: t.RetroDisplayForeground, cyan: t.RetroDisplayForeground2, arc: t.RangeDefault,
     track: light ? "#8f8f8f" : "#1e1e1e", needle: light ? "#121212" : "#d9d9d9",
     ctrlBg: t.ControlBackground, frame: light ? "#4f4f4f" : "#111111", on: t.ViewControlOn,
     meterBg: t.MeterBackground, scale: t.RetroDisplayScaleText.slice(0, 7), title: t.RetroDisplayTitle,
-    dispText: light ? "#cfcfcf" : "#b5b5b5", panel: light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)",
+    dispText: light ? "#cfcfcf" : "#b5b5b5",
     green: "#1ec15a", greenDim: "#0f6b33",
   };
+  // in the device: the user's own Live theme (live.colors), when it reported
+  if (S.live) for (const k in S.live) th[k] = S.live[k];
+  return th;
+}
+
+// ---------------------------------------------------------------- structure (design/RUBRIC.md)
+// A tile holds one group of things (rule 1). Flat, radius 1, no border.
+function tile(c, th, x, y, w, h) { rr(c, x, y, w, h, 1, th.tile); }
+// A screen shows measurements (rule 2). It is a tile of its own.
+function screen(c, th, x, y, w, h) { rr(c, x, y, w, h, 2, th.display); }
+// A strip at the top (or bottom) edge of a screen for readouts, legend and small buttons,
+// split from the plot by a 1 px line (rule 2.3). Returns the y of the text baseline.
+function strip(c, th, x, y, w, h = 18, bottom = false) {
+  c.fillStyle = th.dline;
+  c.fillRect(x + 3, bottom ? y : y + h - 1, w - 6, 1);
+  return bottom ? y + h - 5 : y + h - 6;
+}
+// A 1 px line between two groups in one tile (rule 4.4).
+function divider(c, th, x, y, h, horizontal = false, w = 0) {
+  c.fillStyle = th.divider;
+  if (horizontal) c.fillRect(x, y, w, 1); else c.fillRect(x, y, 1, h);
 }
 
 // ---------------------------------------------------------------- signal simulation
@@ -257,7 +281,7 @@ function waveScroll(c, th, x, y, w, h, hist, key, color) {
 // draws the last 3 s of output level and estimates the decay time as 3 x the time the level
 // takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
-  rr(c, x, y, w, h, 3, th.display);
+  screen(c, th, x, y, w, h);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
@@ -369,8 +393,8 @@ function wrapText(c, x, y, w, text, o = {}) {
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
   if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
-  const y = HEAD_H + 6, h = DEVICE_H - 12;
-  rr(c, x, y, GAIN_W, h, 3, th.panel);
+  const y = HEAD_H + 4, h = DEVICE_H - 8;
+  tile(c, th, x, y, GAIN_W, h);
   let top = y;
   if (S.views) {                                      // view selector at the top of the column
     viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);

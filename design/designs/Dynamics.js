@@ -11,29 +11,36 @@ DESIGNS["Dynamics"] = {
                   "First 4 controls under the display, the rest in the left columns; Input / Output gain at the right"],
         click(x, y, st) { for (const [i, r] of (st.tabs || []).entries()) if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) st.view = i; },
         draw(c, th, st, ps, vals) {
-          menu(c, th, 6, HEAD_H + 6, 116, "Pressure5"); arrows(c, th, 126, HEAD_H + 6);
+          const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+          // selector tile: effect menu, then the controls that do not fit under the screen
+          tile(c, th, 4, y0, 150, H);
+          menu(c, th, 8, y0 + 4, 110, "Pressure5"); arrows(c, th, 121, y0 + 4);
           const rest = ps.slice(4);
-          if (rest.length) knobGrid(c, th, rest, { x: 4, y: HEAD_H + 24, w: 150, h: DEVICE_H - 28 }, 2, vals);
-          else if (!ps.length) txt(c, 79, HEAD_H + 90, "No controls", { color: th.dim });
-          const dx = 160, dw = 324, dy = HEAD_H + 6, dh = 98;
-          rr(c, dx, dy, dw, dh, 3, th.display);
-          st.tabs = viewTabs(c, th, dx + 5, dy + 4, ["Needle", "Activity"], st.view || 0);
-          txt(c, dx + dw - 8, dy + 15, `GR -${st.gr.toFixed(1)} dB`, { color: th.orange, align: "right" });
-          c.fillStyle = th.dline; c.fillRect(dx, dy + 22, dw, 1);
-          hint(dx + dw - 70, dy + 4, 66, 14, "Gain Reduction", "How much the effect turns the level down right now, in dB. Measured from the input and output levels.");
+          if (rest.length) knobGrid(c, th, rest, { x: 4, y: y0 + 22, w: 150, h: H - 24 }, 2, vals);
+          else if (!ps.length) txt(c, 79, y0 + 86, "No controls", { color: th.dim });
+          // screen: view buttons + reading in the top strip, legend in the bottom strip
+          const dx = 156, dw = 330, dy = y0, dh = 100;
+          screen(c, th, dx, dy, dw, dh);
+          st.tabs = viewTabs(c, th, dx + 5, dy + 3, ["Needle", "Activity"], st.view || 0);
+          strip(c, th, dx, dy, dw, 21);
+          txt(c, dx + dw - 8, dy + 14, `GR -${st.gr.toFixed(1)} dB`, { color: th.orange, align: "right" });
+          hint(dx + dw - 70, dy + 3, 66, 14, "Gain Reduction", "How much the effect turns the level down right now, in dB. Measured from the input and output levels.");
+          const py = dy + 21, ph = dh - 21 - 15;
+          strip(c, th, dx, dy + dh - 15, dw, 15, true);
           if ((st.view || 0) === 0) {
-            grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
-            hint(dx, dy + 23, dw, dh - 23, "Gain Reduction Needle", "Shows how many dB the effect takes away, like the meter of Glue Compressor. 0 = no change. Measured from the input and output levels.");
-            legend(c, th, dx + 6, dy + dh - 5, [[th.cyan, "Gain reduction", "Needle: dB the effect takes away now."]], { line: true });
+            grNeedle(c, th, dx + 30, py, dw - 60, ph, st.gr);
+            hint(dx, py, dw, ph, "Gain Reduction Needle", "Shows how many dB the effect takes away, like the meter of Glue Compressor. 0 = no change. Measured from the input and output levels.");
+            legend(c, th, dx + 8, dy + dh - 4, [[th.cyan, "Gain reduction", "Needle: dB the effect takes away now."]], { line: true });
           } else {
-            activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
-            hint(dx, dy + 23, dw, dh - 23, "Activity", "The last seconds, newest on the right: the input level in grey and the gain reduction in orange, like the display of Compressor.");
-            legend(c, th, dx + 6, dy + dh - 5, [[S.theme === "light" ? "#5e5e5e" : "#5a5a5a", "Input", "Input level over time."],
+            activity(c, th, dx + 3, py, dw - 6, ph, st.hist);
+            hint(dx, py, dw, ph, "Activity", "The last seconds, newest on the right: the input level in grey and the gain reduction in orange, like the display of Compressor.");
+            legend(c, th, dx + 8, dy + dh - 4, [[S.theme === "light" ? "#5e5e5e" : "#5a5a5a", "Input", "Input level over time."],
                                                [th.orange, "Gain reduction", "dB taken away over time; lower = more reduction."]]);
           }
-          const first = ps.slice(0, 4);
-          rr(c, dx, dy + dh + 4, dw, DEVICE_H - dh - 16, 3, th.panel);
-          first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, dy + dh + 6, 74, p, vals[p._i], true));
+          // main controls tile under the screen
+          const first = ps.slice(0, 4), ky = dy + dh + 2;
+          tile(c, th, dx, ky, dw, y0 + H - ky);
+          first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, ky + 1, 74, p, vals[p._i], true));
           gainStrip(c, th, 556 - GAIN_W - 4, st);
         } },
       { id: "A", name: "Glue", width: 470, step: stepDynamics, live: liveGeneric,
