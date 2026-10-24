@@ -56,6 +56,37 @@
     st.inL = Math.max(inNow, st.inL - 24 * dt); st.outL = Math.max(inNow + tout - tin, st.outL - 24 * dt);
     st.hist.push({ i: st.bi[2], o: st.bo[2] }); if (st.hist.length > 400) st.hist.shift();
   }
+  // ---- real measurements: 48 airwin~ bands -> the 96 display bins this file draws ----
+  const fin = (v, d) => Number.isFinite(v) ? v : d;
+  const toBins = (a48, def) => {
+    const o = new Array(NB);
+    for (let i = 0; i < NB; i++) {
+      const pos = clamp(Math.log(fq(i) / 20) / Math.log(1000) * 48 - 0.5, 0, 47), j = Math.floor(pos), u = pos - j;
+      const a = a48 && a48.length > j ? fin(a48[j], def) : def, b = a48 && a48.length > Math.min(47, j + 1) ? fin(a48[Math.min(47, j + 1)], def) : def;
+      o[i] = a + (b - a) * u;
+    }
+    return o;
+  };
+  function liveBright(st, m, dt) {
+    if (!st.si) { st.si = Array(NB).fill(-90); st.so = Array(NB).fill(-90); st.rs = Array(NB).fill(0); st.r48 = Array(48).fill(0);
+      st.bi = [-90, -90, -90]; st.bo = [-90, -90, -90]; st.cen = [1, 1]; st.hist = []; }
+    const sIn = m.specIn || [], sOut = m.specOut || [];
+    if (sIn.length >= 48 && sOut.length >= 48) {
+      smoothSpec(st.si, toBins(sIn, -120), dt); smoothSpec(st.so, toBins(sOut, -120), dt);
+      // response = out - in per band; where the input is nearly silent keep the previous value
+      for (let b = 0; b < 48; b++) if (fin(sIn[b], -120) > -80) st.r48[b] = clamp(fin(sOut[b], -120) - sIn[b], -24, 24);
+      const r = toBins(st.r48, 0); for (let i = 0; i < NB; i++) st.rs[i] += (r[i] - st.rs[i]) * 0.35;
+    }
+    const i250 = iOf(250), i4k = iOf(4000);
+    st.bi = [powAvg(st.si, 0, i250), powAvg(st.si, i250 + 1, i4k), powAvg(st.si, i4k + 1, NB - 1)];
+    st.bo = [powAvg(st.so, 0, i250), powAvg(st.so, i250 + 1, i4k), powAvg(st.so, i4k + 1, NB - 1)];
+    const cen = a2 => { let s = 0, p = 0; for (let i = 0; i < NB; i++) { const w = Math.pow(10, a2[i] / 10); s += fq(i) * w; p += w; } return s / p / 1000; };
+    st.cen = [cen(st.si), cen(st.so)];
+    const pk = a => Math.max(fin(a && a[0], -120), fin(a && a[1], -120));
+    st.inL = Math.max(pk(m.inPkDb), (Number.isFinite(st.inL) ? st.inL : -60) - 24 * dt);
+    st.outL = Math.max(pk(m.outPkDb), (Number.isFinite(st.outL) ? st.outL : -60) - 24 * dt);
+    st.hist.push({ i: st.bi[2], o: st.bo[2] }); if (st.hist.length > 400) st.hist.shift();
+  }
   const NAME = "Air";
 
   DESIGNS["Brightness"] = {
@@ -63,7 +94,7 @@
     refs: [["EQEightL12.png", "EQ Eight"], ["ChannelEQL12.png", "Channel EQ"], ["AutoFilterL12.png", "Auto Filter"]],
     lead: "Visual cue: the brightness change itself — a live spectrum (FFT) of the input and output, and the out ÷ in curve showing which frequencies the effect lifts or cuts.",
     options: [
-      { id: "A", name: "EQ Eight", width: 668, step: stepBright,
+      { id: "A", name: "EQ Eight", short: "Spectrum", width: 668, step: stepBright, live: liveBright,
         why: "One big spectrum display with the measured out ÷ in response drawn as an orange curve over it — like EQ Eight.",
         bullets: ["Driven by FFT of input and output; curve = out ÷ in per frequency", "Grey = input spectrum, cyan = output spectrum", "Effect menu and arrows inside the display; dials in a left block"],
         draw(c, th, st, ps, vals) {
@@ -73,10 +104,16 @@
           rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
           const r12 = st.rs ? st.rs[iOf(12000)] : 0;
           txt(c, dx + 150, dy + 15, `Change at 12 kHz ${f1(r12)} dB`, { color: th.dispText, align: "left" });
-          txt(c, dx + dw - 8, dy + 15, "Out ÷ In", { color: th.orange, align: "right" });
-          txt(c, dx + dw - 62, dy + 15, "Out", { color: th.cyan, align: "right" });
-          txt(c, dx + dw - 90, dy + 15, "In", { color: th.dispText, align: "right" });
+          legend(c, th, dx + dw - 116, dy + 15, [
+            [greyF(), "In", "Grey area: the spectrum of the sound going into the effect."],
+            [th.cyan, "Out", "Cyan area and line: the spectrum of the sound coming out of the effect."],
+            [th.orange, "Out ÷ In", "Orange curve: how much each frequency is raised or lowered, in dB. Read it on the scale at the left."]]);
           const px = dx + 28, py = dy + 26, pw = dw - 36, ph = dh - 26 - 14;
+          hint(dx, dy, dw, dh, "Spectrum Display", "Shows the sound by frequency, low on the left and high on the right. Measured from the input and the output of the effect.");
+          hint(dx + 150, dy + 4, 150, 14, "Change Readout", "How many dB the effect raises or lowers the level at 12 kHz. Measured as output level minus input level.");
+          hint(px, py, pw, ph, "Response Curve", "The orange line shows the change at each frequency, in dB, on the scale at the left. Above the middle line the effect adds level; below it, the effect takes level away.");
+          hint(dx + 1, py, 24, ph, "Change Scale", "Scale for the orange curve, in dB. 0 means no change.");
+          hint(px, dy + dh - 12, pw, 12, "Frequency Scale", "Frequency in Hz, low on the left and high on the right (100, 1k = 1000 Hz, 10k = 10000 Hz).");
           c.strokeStyle = th.dline; c.lineWidth = 1;
           [100, 1000, 10000].forEach((f, k) => { const X = lx(f, px, pw); c.beginPath(); c.moveTo(X, py); c.lineTo(X, py + ph); c.stroke();
             txt(c, X, dy + dh - 3, ["100", "1k", "10k"][k], { color: th.scale, size: 9 }); });
@@ -92,14 +129,23 @@
           c.strokeStyle = th.orange; c.lineWidth = 2; c.stroke();
           c.restore();
         } },
-      { id: "B", name: "Spectrum bars", width: 608, step: stepBright,
+      { id: "B", name: "Spectrum bars", short: "Bars", width: 608, step: stepBright, live: liveBright,
         why: "A band analyser: output level as bars with the input as a cap, and under it a strip of boost/cut bars per band — like the Spectrum device.",
         bullets: ["Driven by FFT of input and output in 48 bands; lower strip = out − in", "Orange bars = boosted, cyan bars = cut, centre line = no change", "Dials in one row under the display, so 0 to 13 controls fit"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
           const dx = 6, dy = HEAD_H + 6, dw = 528, dh = 108;
           rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
-          txt(c, dx + dw - 8, dy + 15, "Cap = input · bar = output", { color: th.dispText, align: "right" });
+          legend(c, th, dx + dw - 190, dy + 15, [
+            [th.dispText, "Input cap", "The short grey line on top of each bar: the input level of that frequency band."],
+            [th.cyan, "Output", "Cyan bars: the output level of each frequency band."],
+            [th.orange, "Boost", "Orange bars in the lower strip: bands the effect raises, in dB."],
+            [th.cyan, "Cut", "Cyan bars in the lower strip: bands the effect lowers, in dB."]], { gap: 6 });
+          hint(dx, dy, dw, dh, "Band Analyser", "Shows 48 frequency bands, low on the left and high on the right. Measured from the input and the output of the effect.");
+          hint(dx + 34, dy + 24, dw - 42, 46, "Level Bars", "Cyan bar: the output level of the band. Grey cap: the input level of the band. Scale from -90 to -6 dB.");
+          hint(dx + 34, dy + 74, dw - 42, 26, "Change Strip", "How much the effect raises (orange, up) or lowers (cyan, down) each band, in dB. Up to 6 dB either way. The centre line means no change. Measured as output minus input.");
+          hint(dx + 2, dy + 74, 30, 26, "Change Scale", "Scale for the change strip, in dB.");
+          hint(dx + 34, dy + dh - 10, dw - 42, 10, "Frequency Scale", "Frequency in Hz, low on the left and high on the right.");
           ctl(c, th, ps, { x: 6, y: HEAD_H + 118, w: 528, h: 49 }, Math.max(1, ps.length), vals);
           const px = dx + 34, pw = dw - 42, K = 48, pitch = pw / K, y1 = dy + 24, h1 = 46, y2 = dy + 74, h2 = 26, mid = y2 + h2 / 2;
           txt(c, dx + 6, y1 + 9, "Out", { color: th.scale, size: 9, align: "left" });
@@ -117,7 +163,7 @@
             c.fillStyle = r >= 0 ? th.orange : th.cyan; c.fillRect(x, hh >= 0 ? mid - hh : mid, bw, Math.max(1, Math.abs(hh)));
           }
         } },
-      { id: "C", name: "Band meters", width: 508, step: stepBright,
+      { id: "C", name: "Band meters", short: "Bands", width: 508, step: stepBright, live: liveBright,
         why: "Three level bands (low, mid, high) with input vs output side by side, plus the high-band history — a channel-strip way to see 'is it brighter?'.",
         bullets: ["Driven by FFT of input and output, summed into Low / Mid / High", "Orange number = how many dB the band moved; line graph = high band over time", "Spectral centroid readout (average pitch of the sound) in and out"],
         draw(c, th, st, ps, vals) {
@@ -125,7 +171,17 @@
           ctl(c, th, ps, { x: 2, y: HEAD_H + 4, w: 108, h: DEVICE_H - 8 }, 2, vals);
           const dx = 114, dy = HEAD_H + 6, dw = 320, dh = DEVICE_H - 12;
           rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
-          txt(c, dx + dw - 36, dy + 15, "In", { color: th.dispText, align: "right" }); txt(c, dx + dw - 8, dy + 15, "Out", { color: th.cyan, align: "right" });
+          legend(c, th, dx + dw - 128, dy + 15, [
+            [th.orange, "Change", "Orange number under a pair of meters: how many dB the effect moved that band, output minus input."],
+            [th.dispText, "In", "Grey: the level of the sound going into the effect."],
+            [th.cyan, "Out", "Cyan: the level of the sound coming out of the effect."]]);
+          hint(dx, dy, dw, dh, "Band Display", "Splits the sound into low, mid and high bands and shows input and output level side by side. Measured with a spectrum analysis of both signals.");
+          [0, 1, 2].forEach(k => hint(dx + k * dw / 3 + 6, dy + 24, dw / 3 - 12, 86, ["Low Band", "Mid Band", "High Band"][k] + " Meters",
+            ["Level of sounds below 250 Hz, input (grey) and output (cyan). The number below is the change in dB.",
+             "Level of sounds between 250 Hz and 4 kHz, input (grey) and output (cyan). The number below is the change in dB.",
+             "Level of sounds above 4 kHz, input (grey) and output (cyan). The number below is the change in dB."][k]));
+          hint(dx + 8, dy + 111, dw - 16, 27, "High Band History", "The high band level over the last moments, input (grey) and output (cyan). Newest on the right.");
+          hint(dx + 6, dy + dh - 16, 180, 12, "Centroid Readout", "The average pitch of the sound in kHz, input then output. A higher number means a brighter sound. Measured from the spectrum.");
           if (!st.si) return;
           const names = ["Low < 250 Hz", "Mid", "High > 4 kHz"], gw = dw / 3, by = dy + 38, bh = 58, fr = v => (clamp(v, -80, -35) + 80) / 45, hr = v => (clamp(v, -90, -55) + 90) / 35;
           names.forEach((n, k) => {

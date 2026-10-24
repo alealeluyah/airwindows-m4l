@@ -63,6 +63,42 @@
   };
   const sgn = v => (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(1);
 
+  // ---- live (real measurement) helpers ----
+  const lvArr = a => Array.isArray(a) && a.length >= 48;
+  const lvF = (v, d) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const lvPk = (a) => Math.max(lvF(a && a[0], -120), lvF(a && a[1], -120));
+  const lvSm = (prev, v, up, dn) => (typeof prev !== "number" || !Number.isFinite(prev) ? v : prev + (v - prev) * (v > prev ? up : dn));
+  // 48 measured bands -> the 72 display bins of this file
+  function lvRes(a) {
+    const o = new Array(NB);
+    for (let i = 0; i < NB; i++) {
+      const p = clamp(Math.log10(fOf(i) / 20) / 3 * 48 - 0.5, 0, 47), i0 = Math.floor(p), i1 = Math.min(47, i0 + 1), f = p - i0;
+      o[i] = lvF(a[i0], -120) * (1 - f) + lvF(a[i1], -120) * f;
+    }
+    return o;
+  }
+  // peak level of the two channels with 24 dB/s release: feeds gainStrip
+  function lvIO(st, m, dt) {
+    st.inL = Math.max(lvPk(m.inPkDb), lvF(st.inL, -120) - 24 * dt);
+    st.outL = Math.max(lvPk(m.outPkDb), lvF(st.outL, -120) - 24 * dt);
+  }
+  // per-band peak hold with a fall in dB/s; result kept in st[key]
+  function lvHold(st, key, src, dt, rate) {
+    const prev = st[key], o = new Array(48);
+    for (let i = 0; i < 48; i++) o[i] = Math.max(lvF(src[i], -120), (prev ? prev[i] : -120) - rate * dt);
+    return (st[key] = o);
+  }
+  // output minus input per band; held where the input is too quiet to compare
+  function lvResp(st, key, mi, mo) {
+    const prev = st[key] || new Array(48).fill(0), o = new Array(48);
+    for (let i = 0; i < 48; i++) {
+      const a = lvF(mi[i], -120), b = lvF(mo[i], -120);
+      o[i] = a < -80 ? prev[i] : prev[i] + (clamp(b - a, -40, 40) - prev[i]) * 0.35;
+    }
+    return (st[key] = o);
+  }
+  const lvPow = v => Math.pow(10, lvF(v, -120) / 10);
+
   // ---- tape model: soft saturation with a little bias, normalised to 1 at full scale ----
   const drv = vals => 1 + 2 * mean(vals);
   const tf = (x, k) => (Math.tanh(k * x + 0.1) - Math.tanh(0.1)) / (Math.tanh(k + 0.1) - Math.tanh(0.1));
@@ -90,24 +126,90 @@
     refs: [["SaturatorL12.png", "Saturator"], ["DrumBussL12.png", "Drum Buss"], ["EQEightL12.png", "EQ Eight"]],
     lead: "Visual cue: what the tape does to the signal, measured live from input vs output: transfer curve, spectrum change, or waveform difference.",
     options: [
-      { id: "A", name: "Saturator", width: 608, step: stepT,
+      { id: "A", name: "Saturator", short: "Curve", width: 608, step: stepT,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt);
+          // measured transfer curve: bins with data are kept ~2 s, then dropped
+          const xf = st.xf || (st.xf = new Array(32).fill(-9)), age = st.xa || (st.xa = new Array(32).fill(999));
+          const xm = Array.isArray(m.xfer) ? m.xfer : [];
+          for (let i = 0; i < 32; i++) {
+            const v = xm[i];
+            if (typeof v === "number" && Number.isFinite(v) && v > -8) { xf[i] = xf[i] <= -8 ? v : xf[i] + (v - xf[i]) * 0.3; age[i] = 0; }
+            else if (++age[i] > 60) xf[i] = -9;
+          }
+          // recent (input, output) sample pairs from the scopes
+          const iL = Array.isArray(m.inScopeL) ? m.inScopeL : [], oL = Array.isArray(m.outScopeL) ? m.outScopeL : [];
+          const n = Math.min(iL.length, oL.length, 64), dots = [];
+          let ext = 0;
+          for (let i = 0; i < n; i++) if (Number.isFinite(iL[i]) && Number.isFinite(oL[i])) { dots.push([iL[i], oL[i]]); ext = Math.max(ext, Math.abs(iL[i]), Math.abs(oL[i])); }
+          st.dots = dots;
+          for (let i = 0; i < 32; i++) if (xf[i] > -8) ext = Math.max(ext, Math.abs(-1 + (i + 0.5) / 16), Math.abs(xf[i]));
+          const tgt = Math.max(0.05, ext * 1.15);
+          st.xz = typeof st.xz === "number" && st.xz > tgt ? st.xz + (tgt - st.xz) * 0.05 : tgt;
+          // peak gain from the linear peaks (held while the input is silent)
+          if (lvF(m.inPk, 0) > 1e-4) st.pg = lvSm(st.pg, 20 * Math.log10(Math.max(lvF(m.outPk, 0), 1e-6) / m.inPk), 0.3, 0.3);
+          if (st.pg === undefined) st.pg = 0;
+          // harmonics: strongest output band between 40 and 400 Hz, then bands at 2x..8x
+          if (!lvArr(m.specIn) || !lvArr(m.specOut)) return;
+          const hO = lvHold(st, "hO48", m.specOut, dt, 50);
+          let bi = 4;
+          for (let b = 4; b <= 20; b++) if (hO[b] > hO[bi]) bi = b;
+          if (st.b0 === undefined || hO[bi] > hO[st.b0] + 3) st.b0 = bi;
+          const ad = [];
+          for (let b = 0; b < 48; b++) ad.push(10 * Math.log10(Math.max(1e-12, lvPow(m.specOut[b]) - lvPow(m.specIn[b]))));
+          const hd = st.hd || (st.hd = new Array(8).fill(-120));
+          let pw = 0;
+          for (let n2 = 1; n2 <= 8; n2++) {
+            const bn = Math.round(st.b0 + 16 * Math.log10(n2));
+            let v = -120;
+            if (bn <= 47) for (let b = Math.max(0, bn - 1); b <= Math.min(47, bn + 1); b++) v = Math.max(v, n2 === 1 ? hO[b] : ad[b]);
+            hd[n2 - 1] = Math.max(v, hd[n2 - 1] - 40 * dt);
+            if (n2 > 1) pw += Math.pow(10, hd[n2 - 1] / 10);
+          }
+          st.thd = clamp(10 * Math.log10(Math.max(pw, 1e-12)) - hd[0], -99, 20);
+        },
         why: "A transfer curve with a moving dot and harmonic bars, like the waveshaper display of Saturator.",
         bullets: ["Drive curve: output level plotted against input level, with the live signal range lit in orange",
-          "Harmonic bars H1 to H8 and a THD readout, from an FFT of the output",
+          "Harmonic bars H1 to H8 and a THD readout, from an FFT of the output (live: H1 = output level at the strongest 40-400 Hz band, H2-H8 = output minus input power, where positive, at 2x to 8x that band; readout = added H2-H8 relative to H1 in dB)",
           "Driven by the audio: input vs output level (in/out meters at the right); dials only set the curve shape"],
         draw(c, th, st, ps, vals) {
-          const k = drv(vals), a = st.a; st.k = k;
+          const k = drv(vals), a = st.a, lv = !!st.lv; st.k = k;
           chrome(c, th, 6, TOP + 4, 84, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 428, y: TOP + 4, w: 108, h: 163 });
           const px = 124, py = TOP + 6, pw = 300, ph = 157;
           panel(c, th, px, py, pw, ph);
-          const bx = px + 10, by = py + 16, bs = 122;
+          const bx = px + 10, by = py + 16, bs = 112;
           txt(c, bx + bs / 2, py + 11, "Out vs in", { color: th.scale, size: 8.5 });
           rr(c, bx + 0.5, by + 0.5, bs, bs, 0, null, th.dline);
+          hint(bx, by, bs, bs, "Transfer Curve", "Output level plotted against input level. A straight diagonal means the tape changes nothing; a bend means loud peaks are squashed. Measured from the input and output samples.");
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath();
           c.moveTo(bx + bs / 2, by); c.lineTo(bx + bs / 2, by + bs); c.moveTo(bx, by + bs / 2); c.lineTo(bx + bs, by + bs / 2);
           c.moveTo(bx, by + bs); c.lineTo(bx + bs, by); c.stroke();
-          const X = x => bx + bs * (x + 1) / 2, Y = y => by + bs * (1 - (clamp(y, -1, 1) + 1) / 2);
+          const zz = lv ? st.xz || 1 : 1;
+          const X = x => bx + bs * (x / zz + 1) / 2, Y = y => by + bs * (1 - (clamp(y / zz, -1, 1) + 1) / 2);
+          if (lv) {
+            // measured curve (cyan; orange where it was updated just now) and the live in/out sample pairs
+            const xf = st.xf || [], age = st.xa || [];
+            for (const [col, lw, fresh] of [[th.cyan, 1.5, false], [th.orange, 2, true]]) {
+              c.strokeStyle = col; c.lineWidth = lw; c.beginPath();
+              let pen = false;
+              for (let i = 0; i < 32; i++) {
+                const ok = xf[i] > -8 && (!fresh || age[i] <= 3);
+                if (!ok) { pen = false; continue; }
+                const x = X(-1 + (i + 0.5) / 16), y = Y(xf[i]);
+                pen ? c.lineTo(x, y) : c.moveTo(x, y); pen = true;
+              }
+              c.stroke();
+            }
+            const dots = st.dots || [];
+            c.fillStyle = th.orange;
+            dots.forEach(([x, y], i) => { c.globalAlpha = i === dots.length - 1 ? 1 : 0.35; c.beginPath(); c.arc(X(x), Y(y), i === dots.length - 1 ? 2.5 : 1.2, 0, Math.PI * 2); c.fill(); });
+            c.globalAlpha = 1;
+            if (dots.length) { const [lx, ly] = dots[dots.length - 1]; hint(X(lx) - 5, Y(ly) - 5, 10, 10, "Live Dot", "The newest pair of input and output levels. It moves along the curve as the signal plays."); }
+            hint(bx + bs - 40, py + 2, 40, 12, "Curve Zoom", "The input and output level shown at the plot edge. The plot zooms in on quiet signals.");
+            txt(c, bx + bs, py + 11, `+/-${zz.toFixed(2)}`, { color: th.scale, size: 8.5, align: "right" });
+            txt(c, bx, py + ph - 5, `Peak gain ${sgn(st.pg || 0)} dB`, { color: th.orange, size: 9, align: "left" });
+          } else {
           c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
           for (let i = 0; i <= 64; i++) { const x = -1 + i / 32; i ? c.lineTo(X(x), Y(tf(x, k))) : c.moveTo(X(x), Y(tf(x, k))); }
           c.stroke();
@@ -117,46 +219,84 @@
           c.stroke();
           const xi = clamp(wave(st.t * 14, a), -1, 1);
           c.fillStyle = th.orange; c.beginPath(); c.arc(X(xi), Y(tf(xi, k)), 2.5, 0, Math.PI * 2); c.fill();
+          hint(X(xi) - 5, Y(tf(xi, k)) - 5, 10, 10, "Live Dot", "The newest pair of input and output levels. It moves along the curve as the signal plays.");
           txt(c, bx, py + ph - 5, `Peak gain ${sgn(gainDb(a, k))} dB`, { color: th.orange, size: 9, align: "left" });
+          }
           // harmonics
           const hx = px + 156, hy = py + 22, hh = 96, bw = 15;
           txt(c, hx, py + 11, "Harmonics", { color: th.scale, size: 8.5, align: "left" });
-          const h = harmonics(Math.max(a, 0.05), k);
-          h.forEach((v, i) => {
-            meterV(c, th, hx + i * 17, hy, bw, hh, clamp((db(v) + 72) / 72, 0, 1), false, i ? th.orange : th.cyan);
+          const h = lv ? null : harmonics(Math.max(a, 0.05), k);
+          (lv ? (st.hd || new Array(8).fill(-120)) : h).forEach((v, i) => {
+            meterV(c, th, hx + i * 17, hy, bw, hh, clamp(((lv ? v : db(v)) + (lv ? 80 : 72)) / (lv ? 80 : 72), 0, 1), false, i ? th.orange : th.cyan);
             txt(c, hx + i * 17 + bw / 2, hy + hh + 10, String(i + 1), { color: th.dispText, size: 8.5 });
           });
+          if (lv) txt(c, hx, py + ph - 5, `Added H2-H8 ${(st.thd === undefined ? -99 : st.thd).toFixed(1)} dB`, { color: th.cyan, size: 9, align: "left" });
+          else {
           const thd = Math.sqrt(h.slice(1).reduce((s, v) => s + v * v, 0)) / Math.max(h[0], 1e-6) * 100;
           txt(c, hx, py + ph - 5, `THD ${thd.toFixed(1)} %`, { color: th.cyan, size: 9, align: "left" });
+          }
+          legend(c, th, bx, py + 140, [
+            [th.cyan, "Curve", "The tape curve: output level against input level."],
+            [th.orange, "Live", "The part of the curve the signal uses right now, and the live dot."]]);
+          legend(c, th, hx, py + 140, [
+            [th.cyan, "H1", "Harmonic 1: the main tone (the fundamental) of the output."],
+            [th.orange, "H2-H8", "Harmonics 2 to 8: extra tones the tape adds, at 2 to 8 times the main frequency."]]);
+          hint(bx, py + ph - 14, 90, 14, "Peak Gain", "How much the tape raises or lowers the loudest part of the signal, in dB. Measured from the input and output peaks.");
+          hint(hx, hy, 8 * 17, hh + 12, "Harmonic Bars", "Bars 1 to 8 show the main tone and the extra tones added by the tape. Taller bar means a louder tone. Measured with an FFT of the output.");
+          hint(hx, py + ph - 14, 134, 14, lv ? "Added Harmonics" : "THD Readout", lv ? "Total of the added tones H2 to H8 against the main tone, in dB. Lower means a cleaner sound." : "Total harmonic distortion: how loud the added tones are against the main tone, in percent.");
           gs(c, th, 608 - GAIN_W - 4, st);
         } },
-      { id: "B", name: "EQ Eight", width: 648, step: stepT,
+      { id: "B", name: "EQ Eight", short: "Spectrum", width: 648, step: stepT,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt);
+          if (!lvArr(m.specIn) || !lvArr(m.specOut)) return;
+          st.lvI = lvRes(lvHold(st, "hI48", m.specIn, dt, 50));
+          st.lvO = lvRes(lvHold(st, "hO48", m.specOut, dt, 50));
+          st.lvD = lvRes(lvResp(st, "rs48", m.specIn, m.specOut));
+          let si = 0, so = 0;
+          for (let i = 0; i < 48; i++) { si += lvPow(m.specIn[i]); so += lvPow(m.specOut[i]); }
+          if (lvF(m.inRmsDb, -120) > -90) st.net = lvSm(st.net, 10 * Math.log10(Math.max(so, 1e-12) / Math.max(si, 1e-12)), 0.3, 0.3);
+          if (st.net === undefined) st.net = 0;
+        },
         why: "Spectrum analyser with the tape's measured frequency response drawn over it, like EQ Eight's curve.",
         bullets: ["Grey area is the input spectrum, cyan line the output spectrum (FFT, 20 Hz to 20 kHz)",
           "Orange curve is output minus input in dB (tape response), with readouts at 60 Hz and 15 kHz",
           "Driven by the audio: FFT of input and output, so any effect shows its own response"],
         draw(c, th, st, ps, vals) {
-          const m = mean(vals), a = st.a; st.k = drv(vals);
+          const m = mean(vals), a = st.a, lv = !!st.lv; st.k = drv(vals);
           gs(c, th, 648 - GAIN_W - 4, st);
           place(c, th, ps, vals, { x: 2, y: TOP + 4, w: 106, h: 163 }, { x: 472, y: TOP + 4, w: 106, h: 163 });
           const px = 112, py = TOP + 6, pw = 356, ph = 157;
           panel(c, th, px, py, pw, ph);
           chrome(c, th, px + 4, py + 3, 84, NAME);
-          const sp = st.spI || new Array(NB).fill(-90);
+          const sp = lv ? st.lvI || new Array(NB).fill(-120) : st.spI || new Array(NB).fill(-90);
           const dIn = [], out = [], diff = [];
           for (let i = 0; i < NB; i++) {
+            if (lv) { diff.push(st.lvD ? st.lvD[i] : 0); out.push(st.lvO ? st.lvO[i] : -120); continue; }
             const d = tresp(fOf(i), m) + 0.5 * a * noise(i * 3 + Math.floor(st.t * 18));
             diff.push(d); out.push(sp[i] + d);
           }
           const at = f => Math.round((NB - 1) * Math.log10(f / 20) / 3);
-          const net = 10 * Math.log10(out.reduce((s, v) => s + Math.pow(10, v / 10), 0) / sp.reduce((s, v) => s + Math.pow(10, v / 10), 0));
+          const net = lv ? st.net || 0 : 10 * Math.log10(out.reduce((s, v) => s + Math.pow(10, v / 10), 0) / sp.reduce((s, v) => s + Math.pow(10, v / 10), 0));
           txt(c, px + 150, py + 13, "60 Hz", { color: th.dispText, size: 9, align: "left" });
           txt(c, px + 178, py + 13, sgn(diff[at(60)]), { color: th.orange, size: 9, align: "left" });
           txt(c, px + 214, py + 13, "15 kHz", { color: th.dispText, size: 9, align: "left" });
           txt(c, px + 245, py + 13, sgn(diff[at(15000)]), { color: th.orange, size: 9, align: "left" });
           txt(c, px + 285, py + 13, "Net", { color: th.dispText, size: 9, align: "left" });
           txt(c, px + 306, py + 13, sgn(net) + " dB", { color: th.cyan, size: 9, align: "left" });
-          const gx = px + 22, gy = py + 22, gw = pw - 46, gh = ph - 36;
+          const gx = px + 22, gy = py + 22, gw = pw - 46, gh = ph - 46;
+          hint(px + 148, py + 3, 62, 13, "Change at 60 Hz", "How much the tape raises or lowers the bass at 60 Hz, in dB. Measured as output minus input.");
+          hint(px + 212, py + 3, 70, 13, "Change at 15 kHz", "How much the tape raises or lowers the treble at 15 kHz, in dB. Measured as output minus input.");
+          hint(px + 283, py + 3, 70, 13, "Net Level Change", "Overall level change of the whole signal, in dB. Measured from the input and output spectrum power.");
+          hint(gx, gy, gw, gh, "Spectrum Display", "Frequency from 20 Hz to 20 kHz, left to right. Grey area: the input. Cyan line: the output. Orange line: the difference between them, which is the tape response.");
+          hint(gx - 22, gy, 22, gh, "Level Scale", "Level in dB for the grey area and the cyan line.");
+          hint(gx + gw, gy, 24, gh, "Response Scale", "Level change in dB for the orange response line. 0 is no change.");
+          hint(gx, py + ph - 12, gw, 10, "Frequency Scale", "Frequency in Hz. Bass is at the left, treble at the right.");
+          {
+            const e = legend(c, th, gx, py + 143, [[greyFill(), "Input", "Grey area: spectrum of the signal going into the tape."]]);
+            legend(c, th, e, py + 143, [[th.cyan, "Output", "Cyan line: spectrum of the signal coming out of the tape."],
+              [th.orange, "Response", "Orange line: output minus input in dB. Read it on the scale at the right."]], { line: true });
+          }
           c.save(); c.beginPath(); c.rect(gx, gy, gw, gh); c.clip();
           vgrid(c, th, gx, gy, gw, gh);
           const yS = v => gy + gh * (1 - clamp((v + 80) / 74, 0, 1)), yD = d => gy + gh / 2 - clamp(d, -12, 12) / 12 * gh / 2;
@@ -174,40 +314,76 @@
           [12, 0, -12].forEach(v => txt(c, gx + gw + 3, yD(v) + 3, (v > 0 ? "+" : "") + v, { color: th.orange, size: 8.5, align: "left" }));
           hzLabels(c, th, gx, py + ph - 3, gw);
         } },
-      { id: "C", name: "Scope + gain", width: 620, step: stepT,
+      { id: "C", name: "Scope + gain", short: "Scope", width: 620, step: stepT,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt);
+          const iL = Array.isArray(m.inScopeL) ? m.inScopeL : [], iR = Array.isArray(m.inScopeR) ? m.inScopeR : iL;
+          const oL = Array.isArray(m.scopeL) ? m.scopeL : [], oR = Array.isArray(m.scopeR) ? m.scopeR : oL;
+          const n = Math.min(iL.length, oL.length, 64), I = [], O = [], D = [];
+          let ext = 0;
+          for (let i = 0; i < n; i++) {
+            const a = lvF((iL[i] + lvF(iR[i], iL[i])) / 2, 0), b = lvF((oL[i] + lvF(oR[i], oL[i])) / 2, 0);
+            I.push(a); O.push(b); D.push(b - a); ext = Math.max(ext, Math.abs(a), Math.abs(b), Math.abs(b - a));
+          }
+          st.scI = I; st.scO = O; st.scD = D;
+          const tgt = Math.max(0.02, ext * 1.1);
+          st.scz = typeof st.scz === "number" && st.scz > tgt ? st.scz + (tgt - st.scz) * 0.08 : tgt;
+          st.pkI = lvPk(m.inPkDb); st.pkO = lvPk(m.outPkDb);
+          if (lvF(m.inRmsDb, -120) > -90) st.gnow = lvSm(st.gnow, clamp(lvF(m.gainDb, 0), -40, 40), 0.4, 0.4);
+          if (st.gnow === undefined) st.gnow = 0;
+          st.gh = st.gh || [];
+          st.gh.push(st.gnow); if (st.gh.length > 400) st.gh.shift();
+        },
         why: "Oscilloscope of input against output with their difference, plus a gain-change strip, in the spirit of Drum Buss.",
         bullets: ["Grey = input waveform, cyan = output waveform, orange = the difference (what the tape added)",
           "Strip below: gain change (output level minus input level) over time, +/-12 dB",
           "Driven by the audio: sample-by-sample in vs out; in/out level meters at the far right"],
         draw(c, th, st, ps, vals) {
-          const k = drv(vals), a = st.a; st.k = k;
+          const k = drv(vals), a = st.a, lv = !!st.lv; st.k = k;
           chrome(c, th, 6, TOP + 4, 84, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 410, y: TOP + 4, w: 108, h: 163 });
           const px = 126, py = TOP + 6, pw = 280, ph = 157;
           panel(c, th, px, py, pw, ph);
-          [["In", th.dispText, 8], ["Out", th.cyan, 38], ["Diff", th.orange, 72]].forEach(([s, col, o]) => {
-            c.fillStyle = col; c.fillRect(px + 6 + o, py + 6, 6, 3); txt(c, px + 15 + o, py + 11, s, { color: th.dispText, size: 8.5, align: "left" });
-          });
-          txt(c, px + pw - 6, py + 11, `Peak ${db(a).toFixed(1)} / ${db(Math.abs(tf(a, k))).toFixed(1)} dB`, { color: th.cyan, size: 9, align: "right" });
+          legend(c, th, px + 6, py + 11, [
+            [th.dispText, "In", "Waveform of the signal going into the tape."],
+            [th.cyan, "Out", "Waveform of the signal coming out of the tape."],
+            [th.orange, "Diff", "Output minus input: what the tape added or removed."]], { line: true });
+          hint(px + pw - 112, py + 2, 108, 12, "Peak Levels", "Highest input level, then highest output level, in dB. Measured from the input and output peaks.");
+          txt(c, px + pw - 6, py + 11, lv ? `Peak ${(st.pkI === undefined ? -120 : st.pkI).toFixed(1)} / ${(st.pkO === undefined ? -120 : st.pkO).toFixed(1)} dB` : `Peak ${db(a).toFixed(1)} / ${db(Math.abs(tf(a, k))).toFixed(1)} dB`, { color: th.cyan, size: 9, align: "right" });
           const sx = px + 6, sw = pw - 12, sy = py + 18, sh = 82, mid = sy + sh / 2;
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath(); c.moveTo(sx, mid); c.lineTo(sx + sw, mid); c.stroke();
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
           const Y = v => mid - clamp(v, -1.1, 1.1) * sh * 0.45;
+          if (lv) {
+            const zz = (st.scz || 1) / 0.95;
+            [[th.dispText, 1, st.scI], [th.cyan, 1.5, st.scO], [th.orange, 1, st.scD]].forEach(([col, lw, arr]) => {
+              if (!arr || arr.length < 2) return;
+              c.strokeStyle = col; c.lineWidth = lw; c.beginPath();
+              arr.forEach((v, i) => { const xx = sx + sw * i / (arr.length - 1); i ? c.lineTo(xx, Y(v / zz)) : c.moveTo(xx, Y(v / zz)); });
+              c.stroke();
+            });
+            txt(c, sx + sw - 3, sy + sh - 3, `full scale +/-${zz.toFixed(3)}`, { color: th.scale, size: 8, align: "right" });
+          } else
           [[th.dispText, 1, v => v], [th.cyan, 1.5, v => tf(v, k)], [th.orange, 1, v => tf(v, k) - v]].forEach(([col, lw, f]) => {
             c.strokeStyle = col; c.lineWidth = lw; c.beginPath();
             for (let i = 0; i <= 134; i++) { const x = wave(i / 134 * 2 * Math.PI * 2.2 + st.t * 5, a); const xx = sx + sw * i / 134; i ? c.lineTo(xx, Y(f(x))) : c.moveTo(xx, Y(f(x))); }
             c.stroke();
           });
           c.restore();
+          hint(sx, sy, sw, sh, "Waveform Scope", "A short slice of the sound, drawn as a wave. Compare the grey input with the cyan output; the orange line is the difference between them. The scope zooms to fit the level.");
           const gy = py + 116, gh = 32;
+          hint(sx, py + 100, sw - 70, 12, "Gain Change Label", "The strip below shows output level minus input level over time.");
+          hint(px + pw - 70, py + 100, 64, 12, "Gain Change", "Level change made by the tape right now, in dB. Plus means louder, minus means quieter.");
+          hint(sx, gy, sw, gh, "Gain Change History", "Gain change over time, newest at the right. The middle line is 0 dB. The scale is plus or minus 12 dB.");
           txt(c, px + 6, py + 109, "Gain change (out - in)", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, px + pw - 6, py + 109, sgn(gainDb(a, k)) + " dB", { color: th.orange, size: 9, align: "right" });
+          txt(c, px + pw - 6, py + 109, sgn(lv ? st.gnow || 0 : gainDb(a, k)) + " dB", { color: th.orange, size: 9, align: "right" });
           c.strokeStyle = th.dline; c.beginPath(); c.moveTo(sx, gy + gh / 2); c.lineTo(sx + sw, gy + gh / 2); c.stroke();
           c.save(); c.beginPath(); c.rect(sx, gy, sw, gh); c.clip();
           c.strokeStyle = th.orange; c.lineWidth = 1.5; c.beginPath();
-          const n = Math.min(st.hist.length, sw);
+          const gHist = lv ? st.gh || [] : st.hist;
+          const n = Math.min(gHist.length, sw);
           for (let i = 0; i < n; i++) {
-            const g = gainDb(st.hist[st.hist.length - 1 - i].a, k), yy = gy + gh / 2 - clamp(g, -12, 12) / 12 * gh / 2;
+            const g = lv ? gHist[gHist.length - 1 - i] : gainDb(gHist[gHist.length - 1 - i].a, k), yy = gy + gh / 2 - clamp(g, -12, 12) / 12 * gh / 2;
             i ? c.lineTo(sx + sw - i, yy) : c.moveTo(sx + sw - i, yy);
           }
           c.stroke(); c.restore();

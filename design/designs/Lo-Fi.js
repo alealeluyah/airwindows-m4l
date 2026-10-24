@@ -30,6 +30,16 @@
     c.fillStyle = color || th.green; c.fillRect(x, y, Math.max(0, Math.min(1, v)) * w, h);
   }
   const fl = db0 => cl(1 + db0 / 48, 0, 1);   // dB -> 0..1 for 48 dB meters
+  // width of a legend() row; right- and left-aligned readouts with their own hover hint
+  const lgW = (c, items, o = {}) => { c.font = `400 ${o.size || 8.5}px ${FONT}`; return items.reduce((a, it) => a + Math.ceil(c.measureText(it[1]).width) + (o.line ? 11 : 9) + (o.gap || 8), 0) - (o.gap || 8); };
+  function rtxt(c, xr, yb, s, color, title, info, size) {
+    c.font = `400 ${size || 9.5}px ${FONT}`; const w = Math.ceil(c.measureText(s).width);
+    txt(c, xr, yb, s, { color, align: "right", size }); hint(xr - w - 1, yb - 10, w + 2, 13, title, info);
+  }
+  function ltxt(c, x, yb, s, color, title, info, size) {
+    c.font = `400 ${size || 9.5}px ${FONT}`; const w = Math.ceil(c.measureText(s).width);
+    txt(c, x, yb, s, { color, align: "left", size }); hint(x - 1, yb - 10, w + 2, 13, title, info);
+  }
   const fk = f => f >= 1000 ? (f / 1000) + "k" : String(f);
   // spectrum display: grey fill = input, orange line = output, log frequency axis
   function spec(c, th, x, y, w, h, fin, fout, f0, f1, dTop, dBot, ticks) {
@@ -78,20 +88,68 @@
     levels(st, dt, A, A * 0.9);
   }
 
+  // ---- live: state from the real measurements m (airwin~ frames, ~30 per second) ----
+  const fnum = (v, d) => Number.isFinite(v) ? v : d;
+  const lin = d => Math.pow(10, d / 20);
+  const rel = (prev, v, dt, r = 24) => Math.max(fnum(v, -120), fnum(prev, -120) - r * dt);   // fast attack, release r dB/s
+  const hasN = (a, n) => Array.isArray(a) && a.length >= n;
+  function bandAt(a, f) {                         // level of the 48 log bands at frequency f (linear interpolation)
+    if (!hasN(a, 48)) return -120;
+    const p = 48 * Math.log(f / 20) / Math.log(1000) - 0.5, i = cl(Math.floor(p), 0, 46), t = cl(p - i, 0, 1);
+    return fnum(a[i], -120) * (1 - t) + fnum(a[i + 1], -120) * t;
+  }
+  const mono = (a, b) => { const o = []; for (let i = 0; i < 64; i++) o.push(fnum(a && a[i], 0) * 0.5 + fnum(b && b[i], 0) * 0.5); return o; };
+  const at64 = (arr, u) => { const q = cl(u, 0, 1) * 63, i = Math.min(62, Math.floor(q)), t = q - i; return arr[i] * (1 - t) + arr[i + 1] * t; };
+  const lvl01 = d => cl((fnum(d, -120) + 60) / 60, 0, 1);       // dB -> 0..1 for the scrolling envelopes
+  function liveLofi(st, m, dt) {
+    if (!st.liveOn) Object.assign(st, { liveOn: true, live: true, hist: [], cents: 0, dRms: 1e-6, dDb: -120, scPk: 0.02, bw: 20000, nf: -120, match: 1, lagMs: 0,
+      sIn: new Array(48).fill(-120), sOut: new Array(48).fill(-120), dTop: 0, dBot: -110, bits: 24 });
+    st.inL = rel(st.inL, Math.max(fnum(m.inPkDb[0], -120), fnum(m.inPkDb[1], -120)), dt);
+    st.outL = rel(st.outL, Math.max(fnum(m.outPkDb[0], -120), fnum(m.outPkDb[1], -120)), dt);
+    // option A: the last few ms of input and output, auto-scaled with a slow peak hold
+    const mi = mono(m.inScopeL, m.inScopeR), mo = mono(m.scopeL, m.scopeR);
+    st.scPk = Math.max(0.02, ...mi.map(Math.abs), ...mo.map(Math.abs), st.scPk * lin(-6 * dt));
+    const K = 1 / (st.scPk * 1.15);
+    st.wIn = []; st.wOut = []; st.err = [];
+    for (let px = 0; px < W_A; px++) {
+      const u = px / (W_A - 1), a = at64(mi, u), b = at64(mo, u);
+      st.wIn.push(a * K); st.wOut.push(b * K); st.err.push((b - a) * K);
+    }
+    const lv = new Set(); let ch = 0;
+    mo.forEach((v, i) => { lv.add(Math.round(v * 1e5)); if (i && Math.abs(v - mo[i - 1]) > 1e-6) ch++; });
+    st.levelsN = lv.size; st.changes = ch;
+    st.dDb = rel(st.dDb, m.diffRmsDb, dt); st.dRms = lin(st.dDb); st.errDb = st.dDb;
+    // option B: spectra, bandwidth (first band above 100 Hz where output is 6 dB under input) and noise floor (median of the difference spectrum)
+    if (hasN(m.specIn, 48) && hasN(m.specOut, 48)) {
+      for (let i = 0; i < 48; i++) { st.sIn[i] = rel(st.sIn[i], m.specIn[i], dt); st.sOut[i] = rel(st.sOut[i], m.specOut[i], dt); }
+      let bw = 20000;
+      for (let i = 0; i < 48; i++) if (bandHz(i) >= 100 && m.specIn[i] > -100 && fnum(m.specOut[i], -120) < m.specIn[i] - 6) { bw = bandHz(i); break; }
+      st.bw = Math.exp(Math.log(st.bw) + (Math.log(bw) - Math.log(st.bw)) * 0.3);
+    }
+    if (hasN(m.specDiff, 48)) { const d = m.specDiff.map(v => fnum(v, -120)).sort((a, b) => a - b); st.nf += (d[24] - st.nf) * 0.3; }
+    // option C: level history; match = peak of the out-vs-in cross-correlation (1 = output follows input exactly), lag of that peak
+    if (hasN(m.xcorr, 64) && fnum(m.inRmsDb, -120) > -100) {
+      let bi = 0; for (let i = 1; i < 64; i++) if (m.xcorr[i] > m.xcorr[bi]) bi = i;
+      st.match += (cl(fnum(m.xcorr[bi], 0), 0, 1) - st.match) * 0.4; st.lagMs = bi * 32 / 48;
+    }
+    st.hist.push({ inE: lvl01(Math.max(m.inPkDb[0], m.inPkDb[1])), outE: lvl01(Math.max(m.outPkDb[0], m.outPkDb[1])), dE: lvl01(m.diffRmsDb), match: st.match });
+    if (st.hist.length > 800) st.hist.shift();
+  }
+
   DESIGNS["Lo-Fi"] = {
     effect: "DeRez5",
     refs: [["ReduxL12.png", "Redux"], ["SpectrumL12.png", "Spectrum"], ["TunerL12.png", "Tuner"], ["EchoL12.png", "Echo"]],
     lead: "Visual cue: the damage itself — steps in the waveform, lost highs, noise floor and pitch wobble, measured as output against input.",
     options: [
-      { id: "A", name: "Redux scope", width: 632, step,
+      { id: "A", name: "Redux scope", short: "Scope", width: 632, step, live: liveLofi,
         why: "A zoomed waveform shows the smooth input and the stepped output, with an error strip underneath — like Redux.",
-        bullets: ["Measured: waveform of input (cyan) and output (orange), quantising steps visible; level lines appear when steps are coarse",
-                  "Measured: error strip (output minus input), noise-floor readout, number of distinct levels and level changes",
+        bullets: ["Measured: waveform of input (cyan) and output (orange), quantising steps visible; real audio shows the last few ms auto-scaled (level lines only in the simulated preview)",
+                  "Measured: error strip (output minus input), noise-floor readout (level of output minus input), number of distinct sample values and value changes in the window",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
           if (!st.wIn) return;
           menu(c, th, 6, HEAD_H + 4, 120, "DeRez5"); arrows(c, th, 130, HEAD_H + 4);
-          txt(c, 176, HEAD_H + 15, `Levels ${st.levelsN}   Steps ${st.changes}`, { color: th.text, align: "left" });
+          ltxt(c, 176, HEAD_H + 15, `Levels ${st.levelsN}   Steps ${st.changes}`, th.text, "Levels and Steps Readout", "Levels is how many different sample values the output uses. Steps is how often the value changes in the window. Few levels means a coarse, crunchy sound. Measured from the output audio.");
           const x = 6, y = HEAD_H + 24, w = 330, h = 141, wh = 104, mid = y + wh / 2, sc = wh * 0.42;
           box(c, th, x, y, w, h);
           c.save(); c.beginPath(); c.rect(x, y, w, wh); c.clip();
@@ -102,44 +160,50 @@
           const pts = []; st.wOut.forEach((v, i) => { pts.push([x + 4 + i, mid - v * sc]); });
           line(c, pts, th.orange, 1.8);
           c.restore();
-          txt(c, x + 6, y + 12, "In", { color: th.cyan, align: "left" }); txt(c, x + 22, y + 12, "Out", { color: th.orange, align: "left" });
+          legend(c, th, x + 6, y + 12, [[th.cyan, "In", "The cyan wave is the smooth signal going into the effect."], [th.orange, "Out", "The orange wave is the effect output. Its steps are the rounding in level and time that the effect adds."]], { line: true });
+          hint(x, y, w, wh, "Redux Scope", "Shape of the input and output waves over a few milliseconds. The output shows stair steps when the effect lowers bit depth or sample rate. Measured from the input and output audio.");
           c.fillStyle = th.dline; c.fillRect(x + 4, y + wh + 2, w - 8, 1);
           const ey = y + wh + 4, eh = h - wh - 6, em = ey + eh / 2;
           c.save(); c.beginPath(); c.rect(x, ey, w, eh); c.clip();
-          line(c, st.err.map((v, i) => [x + 4 + i, em - cl(v * 4, -1, 1) * (eh / 2 - 2)]), th.cyan, 1);
+          line(c, st.err.map((v, i) => [x + 4 + i, em - cl(v * 4, -1, 1) * (eh / 2 - 2)]), greyLine(), 1);
           c.restore();
-          txt(c, x + 6, ey + 9, "Error", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, x + w - 6, ey + 9, `Floor ${st.errDb.toFixed(0)} dB`, { color: th.orange, size: 8.5, align: "right" });
+          legend(c, th, x + 6, ey + 9, [[greyLine(), "Error", "The grey line is the output minus the input: the damage the effect adds, magnified 4 times."]], { line: true });
+          hint(x, ey, w, eh, "Error Strip", "The difference between output and input, magnified 4 times. A flat line means the effect changed nothing. Measured from the input and output audio.");
+          rtxt(c, x + w - 6, ey + 9, st.errDb <= -100 ? "Floor < -100 dB" : `Floor ${st.errDb.toFixed(0)} dB`, th.dispText, "Noise Floor Readout", "Level of the error in dB: how loud the added noise and rounding are. Lower is cleaner. Measured as the output minus the input.", 8.5);
           ctl(c, th, ps, { x: 342, y: HEAD_H + 22, w: 284, h: 146 }, 5, vals, 56);
         } },
 
-      { id: "B", name: "Bandwidth", width: 600, step,
+      { id: "B", name: "Bandwidth", short: "Bandwidth", width: 600, step, live: liveLofi,
         why: "A full-range spectrum shows lost highs as the orange line falling away from the grey input, with the noise floor marked — like Spectrum and EQ Eight.",
         bullets: ["Measured: FFT spectrum of input (grey) and output (orange line), log frequency 20 Hz–20 kHz",
-                  "Measured: bandwidth (where output is 6 dB under input) as a cyan marker, noise floor as a dashed line",
+                  "Measured: bandwidth (first band above 100 Hz where output is 6 dB under input) as a cyan marker, noise floor (median of the output-minus-input spectrum) as a dashed line",
                   "Menu and arrows in the display, dials in one row below"],
         draw(c, th, st, ps, vals) {
           if (!st.wIn) return;
           const x = 6, y = HEAD_H + 6, w = 588, h = 96;
           box(c, th, x, y, w, 96);
-          spec(c, th, x, y + 22, w, 74, f => lofiIn(st, f), f => lofiOut(st, f), 20, 20000, 0, -80, [100, 1000, 10000]);
-          const bx = x + w * Math.log(st.bw / 20) / Math.log(1000), ny = y + 22 + 74 * (0 - st.nf) / 80;
+          const dB0 = st.live ? st.dBot : -80;
+          if (st.live) spec(c, th, x, y + 22, w, 74, f => bandAt(st.sIn, f), f => bandAt(st.sOut, f), 20, 20000, 0, dB0, [100, 1000, 10000]);
+          else spec(c, th, x, y + 22, w, 74, f => lofiIn(st, f), f => lofiOut(st, f), 20, 20000, 0, -80, [100, 1000, 10000]);
+          const bx = x + w * Math.log(st.bw / 20) / Math.log(1000), ny = y + 22 + 74 * (0 - st.nf) / -dB0;
           c.save(); c.beginPath(); c.rect(x, y + 22, w, 74); c.clip();
           c.setLineDash([3, 3]); line(c, [[x, ny], [x + w, ny]], th.cyan, 1); c.setLineDash([]);
           line(c, [[bx, y + 22], [bx, y + h]], th.cyan, 1.5);
           c.restore();
           menu(c, th, x + 6, y + 5, 120, "DeRez5"); arrows(c, th, x + 130, y + 5);
-          txt(c, x + w - 8, y + 15, `Bandwidth ${st.bw >= 1000 ? (st.bw / 1000).toFixed(1) + " kHz" : Math.round(st.bw) + " Hz"}`, { color: th.cyan, align: "right" });
-          txt(c, x + w - 120, y + 15, `Floor ${st.nf.toFixed(0)} dB`, { color: th.orange, align: "right" });
-          c.fillStyle = greyFill(); c.fillRect(x + 172, y + 8, 8, 8); txt(c, x + 184, y + 15, "Input", { color: th.dispText, align: "left" });
-          c.fillStyle = th.orange; c.fillRect(x + 218, y + 8, 8, 8); txt(c, x + 230, y + 15, "Output", { color: th.dispText, align: "left" });
+          rtxt(c, x + w - 8, y + 15, `Bandwidth ${st.bw >= 1000 ? (st.bw / 1000).toFixed(1) + " kHz" : Math.round(st.bw) + " Hz"}`, th.dispText, "Bandwidth Readout", "The frequency above which the output is at least 6 dB quieter than the input. Lower means more highs are lost. Measured from the input and output spectrum.");
+          rtxt(c, x + w - 120, y + 15, st.nf <= -100 ? "Floor < -100 dB" : `Floor ${st.nf.toFixed(0)} dB`, th.dispText, "Noise Floor Readout", "Level of the noise the effect adds, in dB. Taken as the middle value of the output-minus-input spectrum.");
+          legend(c, th, x + 172, y + 15, [[greyFill(), "Input", "The grey area is the spectrum of the signal going into the effect: how loud each frequency is."], [th.orange, "Output", "The orange line is the spectrum of the effect output. Where it falls away from the grey area, highs are lost."], [th.cyan, "Bandwidth", "The solid cyan vertical line marks the bandwidth: where the output drops 6 dB under the input."], [th.cyan, "Floor", "The dashed cyan horizontal line marks the noise floor the effect adds."]]);
+          hint(x, y + 22, w, 74, "Spectrum Display", "Level at each frequency, from 20 Hz to 20 kHz (left to right, log scale). Measured from the input and output audio.");
+          hint(bx - 4, y + 22, 8, 74, "Bandwidth Marker", "Where the output falls 6 dB under the input, above 100 Hz. Everything to its right is dulled.");
+          hint(x, ny - 3, w, 6, "Noise Floor Line", "Level of the noise the effect adds. Measured as the middle value of the output-minus-input spectrum.");
           ctl(c, th, ps, { x: 6, y: HEAD_H + 106, w: 588, h: DEVICE_H - 108 }, 10, vals, 58);
         } },
 
-      { id: "C", name: "Wear & wobble", width: 632, step,
+      { id: "C", name: "Wear & wobble", short: "Wear", width: 632, step, live: liveLofi,
         why: "A scrolling view of input, output and the damage left over, plus a pitch-wobble trace in cents — like Echo's activity display and Tuner.",
         bullets: ["Measured: level history of input (grey), output (orange); meters for In, Out and the difference (what the effect changed)",
-                  "Measured: pitch drift of output against input from zero-crossing times, in cents, scrolling trace with ±50 scale",
+                  "Simulated preview: pitch drift in cents. Real audio cannot measure pitch, so the trace shows Match instead: how closely the output follows the input (peak of the out-vs-in cross-correlation, 100 % = identical) with the lag of that peak in ms",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
           if (!st.wIn) return;
@@ -149,22 +213,26 @@
           waveScroll(c, th, x + 4, y + 16, w - 8, th1 - 18, st.hist, "inE", greyFill());
           waveScroll(c, th, x + 4, y + 16, w - 8, th1 - 18, st.hist, "outE", th.orange);
           waveScroll(c, th, x + 4, y + 16, w - 8, th1 - 18, st.hist, "dE", th.cyan);
-          txt(c, x + 6, y + 12, "In", { color: th.dispText, align: "left" }); txt(c, x + 24, y + 12, "Out", { color: th.orange, align: "left" });
-          txt(c, x + 48, y + 12, "Diff", { color: th.cyan, align: "left" });
-          txt(c, x + w - 6, y + 12, `Δ ${db(st.dRms).toFixed(0)} dB`, { color: th.dispText, align: "right" });
+          legend(c, th, x + 6, y + 12, [[greyFill(), "In", "The grey shape is the level of the signal going into the effect over the last seconds."], [th.orange, "Out", "The orange shape is the level of the effect output."], [th.cyan, "Diff", "The cyan shape is the difference between output and input: what the effect changed."]]);
+          hint(x, y + 14, w, th1 - 14, "Level History", "Loudness over time, newest at the right. Grey: input. Orange: output. Cyan: the difference. Measured from the input and output audio.");
+          rtxt(c, x + w - 6, y + 12, `Δ ${st.dRms < 1e-4 ? "< -80" : db(st.dRms).toFixed(0)} dB`, th.dispText, "Difference Readout", "Level of the difference between output and input, in dB. Lower means the effect changes less.");
           c.fillStyle = th.dline; c.fillRect(x + 4, y + th1, w - 8, 1);
           const py = y + th1 + 2, ph = h - th1 - 4, pm = py + ph / 2;
           c.save(); c.beginPath(); c.rect(x, py, w, ph); c.clip();
-          [-50, 0, 50].forEach(v => { c.fillStyle = v ? th.dline : th.scale; c.fillRect(x + 4, Math.round(pm - v / 50 * (ph / 2 - 6)), w - 8, 1); });
+          if (st.live) [0, 0.5, 1].forEach(v => { c.fillStyle = v === 0.5 ? th.dline : th.scale; c.fillRect(x + 4, Math.round(pm - (v * 2 - 1) * (ph / 2 - 6)), w - 8, 1); });
+          else [-50, 0, 50].forEach(v => { c.fillStyle = v ? th.dline : th.scale; c.fillRect(x + 4, Math.round(pm - v / 50 * (ph / 2 - 6)), w - 8, 1); });
           const n = Math.min(st.hist.length, w - 8), pts = [];
-          for (let i = 0; i < n; i++) pts.push([x + w - 4 - i, pm - cl(st.hist[st.hist.length - 1 - i].cents, -50, 50) / 50 * (ph / 2 - 6)]);
+          for (let i = 0; i < n; i++) pts.push([x + w - 4 - i, st.live ? pm - (cl(st.hist[st.hist.length - 1 - i].match, 0, 1) * 2 - 1) * (ph / 2 - 6) : pm - cl(st.hist[st.hist.length - 1 - i].cents, -50, 50) / 50 * (ph / 2 - 6)]);
           if (pts.length) line(c, pts, th.cyan, 1.5);
           c.restore();
-          txt(c, x + 6, py + 20, "Pitch", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, x + w - 6, py + 10, `${st.cents >= 0 ? "+" : ""}${st.cents.toFixed(0)} ¢`, { color: th.orange, size: 8.5, align: "right" });
+          legend(c, th, x + 6, py + ph - 1, [[th.cyan, st.live ? "Match" : "Pitch", st.live ? "The cyan trace shows how closely the output follows the input. The top is identical, the bottom is unrelated. It dips when the effect smears or wobbles the sound." : "The cyan trace shows how far the pitch drifts, from -50 to +50 cents. A cent is one hundredth of a semitone."]], { line: true });
+          hint(x, py, w, ph, st.live ? "Match Trace" : "Pitch Trace", st.live ? "How closely the output follows the input over time, newest at the right. Measured from the cross-correlation of output against input." : "Pitch drift over time in cents, newest at the right. This is a simulated preview; real audio cannot measure pitch.");
+          if (st.live) rtxt(c, x + w - 6, py + ph - 1, `${Math.round(st.match * 100)} %   lag ${st.lagMs.toFixed(1)} ms`, th.dispText, "Match Readout", "Match is how much the output looks like the input, 100 % being identical. Lag is the delay of the best fit, in ms.", 8.5);
+          else rtxt(c, x + w - 6, py + 10, `${st.cents >= 0 ? "+" : ""}${st.cents.toFixed(0)} ¢`, th.dispText, "Pitch Readout", "Pitch drift now, in cents (hundredths of a semitone). Plus is sharp, minus is flat.", 8.5);
           txt(c, 308, HEAD_H + 36, "Δ", { color: th.text, size: 10 });
+          hint(298, HEAD_H + 28, 20, 138, "Difference Meter", "How loud the difference between output and input is, in dB. It shows how much the effect changed. Measured from the input and output audio.");
           meterV(c, th, 303, HEAD_H + 42, 10, 100, fl(db(st.dRms) + 12), false, th.cyan);
-          txt(c, 308, HEAD_H + 154, `${db(st.dRms).toFixed(0)}`, { color: th.text, size: 8.5 });
+          txt(c, 308, HEAD_H + 154, st.dRms < 1e-4 ? "-inf" : `${db(st.dRms).toFixed(0)}`, { color: th.text, size: 8.5 });
           ctl(c, th, ps, { x: 328, y: HEAD_H + 22, w: 298, h: 146 }, 5, vals, 58);
         } },
     ],

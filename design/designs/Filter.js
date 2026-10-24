@@ -57,10 +57,15 @@ function ctl(c, th, ps, vals, area) {
 function tw(c, s) { c.font = `400 9.5px ${FONT}`; return c.measureText(s).width; }
 function rd(c, th, x, y, st) {
   const z = Z(st), f = v => Math.max(-60, v).toFixed(1) + " dB";
+  const tips = { In: ["Input Level", "Loudness of the sound going into the effect, in dB. Measured from the input signal."],
+    Out: ["Output Level", "Loudness of the sound coming out of the effect, in dB. Measured from the output signal."],
+    Change: ["Level Change", "How much louder (+) or quieter (-) the whole sound gets, in dB. Measured from the output level against the input level."] };
   let cx = x;
   [["In", f(st.inL)], ["Out", f(st.outL)], ["Change", (z.dl >= 0 ? "+" : "") + z.dl.toFixed(1) + " dB"]].forEach(([l, v]) => {
+    const x0 = cx;
     txt(c, cx, y, l, { color: th.dim, align: "left" }); cx += tw(c, l) + 5;
     txt(c, cx, y, v, { color: th.text, align: "left" }); cx += tw(c, v) + 16;
+    hint(x0 - 1, y - 10, cx - 14 - x0, 13, tips[l][0], tips[l][1]);
   });
 }
 const GS = (c, th, st, W) => gainStrip(c, th, W - GAIN_W - 4, st);
@@ -99,12 +104,14 @@ function spec(c, th, x, y, w, h, st, o = {}) {
   }
   if (o.cent) {
     const mx = x + 4 + (w - 8) * xf(z.cent);
-    c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath(); c.moveTo(mx, y + 14); c.lineTo(mx, y + h - 12); c.stroke();
+    c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath(); c.moveTo(mx, y + 27); c.lineTo(mx, y + h - 12); c.stroke();
   }
   c.restore();
   if (o.cent) {
     const mx = x + 4 + (w - 8) * xf(z.cent);
-    txt(c, clamp(mx, x + 30, x + w - 30), y + 11, fmtF(z.cent), { color: th.orange, size: 9 });
+    txt(c, clamp(mx, x + 30, x + w - 30), y + 23, fmtF(z.cent), { color: th.orange, size: 9 });
+    hint(clamp(mx, x + 30, x + w - 30) - 24, y + 14, 48, 12, "Centre Frequency", "The middle of the output sound by frequency (its spectral centre). Measured from the output spectrum.");
+    hint(mx - 3, y + 27, 6, h - 39, "Centre Marker", "Marks the centre frequency of the output sound. It moves as the sound changes.");
   }
   if (o.peakDot) {
     let bi = 0; for (let b = 1; b < NB; b++) if (Math.abs(z.meas[b]) > Math.abs(z.meas[bi])) bi = b;
@@ -112,11 +119,28 @@ function spec(c, th, x, y, w, h, st, o = {}) {
     c.beginPath(); c.arc(dx, dy, 5, 0, Math.PI * 2); c.fillStyle = th.orange; c.fill();
     c.strokeStyle = th.display; c.lineWidth = 1.5; c.stroke();
     txt(c, clamp(dx, x + 46, x + w - 46), clamp(dy < my ? dy - 9 : dy + 15, y + 22, y + h - 14), `${fmtF(fq(bi / (NB - 1)))}  ${z.meas[bi] >= 0 ? "+" : ""}${z.meas[bi].toFixed(1)} dB`, { color: th.dispText, size: 9 });
+    hint(dx - 6, dy - 6, 12, 12, "Strongest Change", "The dot sits where the filter changes the level most. The text gives its frequency and the change in dB. Measured from output against input.");
   }
   if (o.labels !== false) {
     [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 4 + (w - 8) * xf(f) + 3, y + h - 3, s, { color: th.scale, size: 8.5, align: "left" }));
     txt(c, x + w - 5, my - 3, "0 dB", { color: th.scale, size: 8.5, align: "right" });
   }
+  if (o.leg !== false) {
+    const L = {
+      Input: [greyFill(), "Input", "The sound going into the effect, by frequency. Taller means louder. Measured with an FFT (a frequency analysis) of the input."],
+      Output: [o.outColor || th.cyan, "Output", "The sound coming out of the effect, by frequency. Measured with an FFT of the output."],
+      Response: [o.curveColor || th.orange, "Response", "What the filter does at each frequency, in dB. Above the middle line is louder, below is quieter. It is the output level minus the input level."],
+      Peak: [th.scale, "Peak", "The highest output level at each frequency. It is held for a moment, then falls."],
+    };
+    let lx = x + 6;
+    if (o.inFill !== false) lx = legend(c, th, lx, y + 11, [L.Input]);
+    const lines = [];
+    if (o.outLine !== false) lines.push(L.Output);
+    if (o.peak) lines.push(L.Peak);
+    if (o.curve !== false) lines.push(L.Response);
+    legend(c, th, lx, y + 11, lines, { line: true });
+  }
+  hint(x, y, w, h, o.title || "Frequency Display", o.info || "Frequency runs left to right, 20 Hz to 20 kHz. The legend in the top left names each colour. The middle line is 0 dB for the Response.");
 }
 // Difference bars: out minus in per band (16 bands). Cyan = boost, orange = cut.
 function diffBars(c, th, x, y, w, h, st, n = 16) {
@@ -129,6 +153,11 @@ function diffBars(c, th, x, y, w, h, st, n = 16) {
     c.fillRect(x + 4 + k * bw + 1, v >= 0 ? my - hh : my, Math.max(1, bw - 2), Math.max(0.5, hh));
   }
   txt(c, x + 6, y + 10, "Change per band", { color: th.scale, size: 8.5, align: "left" });
+  c.font = `400 8.5px ${FONT}`;
+  legend(c, th, x + 6 + Math.ceil(c.measureText("Change per band").width) + 12, y + 10, [
+    [th.cyan, "Boost", "Bars above the middle line: this band gets louder. Measured as output minus input."],
+    [th.orange, "Cut", "Bars below the middle line: this band gets quieter. Measured as output minus input."]]);
+  hint(x, y, w, h, "Change Per Band", "Sixteen bars from low to high frequency. Each bar shows how much the filter raises or lowers that band, in dB. Measured from output against input.");
 }
 // Bands in vs out: grey = input level, cyan = output level, orange = the part the filter changed.
 function bandsIO(c, th, x, y, w, h, st, n = 16) {
@@ -145,8 +174,12 @@ function bandsIO(c, th, x, y, w, h, st, n = 16) {
     c.fillStyle = th.dispText; c.fillRect(bx + 1, base - hy(i), bw - 3, 1);
     if (k % 3 === 0) txt(c, bx + bw / 2, y + h - 3, fmtF(fq((k + 0.5) / n)).replace(" kHz", "k").replace(" Hz", ""), { color: th.scale, size: 8.5 });
   }
-  txt(c, x + 6, y + 10, "Input line, output bars", { color: th.scale, size: 8.5, align: "left" });
-  txt(c, x + w - 6, y + 10, "cut / boost", { color: th.orange, size: 8.5, align: "right" });
+  const lx = legend(c, th, x + 6, y + 10, [[th.dispText, "Input", "The thin line marks the input level of each band. Measured with an FFT of the input."]], { line: true });
+  legend(c, th, lx, y + 10, [
+    [th.cyan, "Kept", "The part of the level that is the same in input and output."],
+    [th.green, "Boost", "Level the filter adds in this band. Output is louder than input."],
+    [th.orange, "Cut", "Level the filter removes in this band. Output is quieter than input."]]);
+  hint(x, y, w, h, "Band Meters", "Sixteen level bars from low to high frequency. The bar height is the output level; the thin line is the input level. Measured with an FFT of input and output.");
 }
 // Scrolling sonogram of the output spectrum; low frequencies at the bottom.
 function sonogram(c, th, x, y, w, h, st) {
@@ -165,12 +198,17 @@ function sonogram(c, th, x, y, w, h, st) {
   c.globalAlpha = 1; c.restore();
   [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 4, y + h - 4 - (h - 22) * xf(f) - 2, s, { color: th.scale, size: 8.5, align: "left" }));
   txt(c, x + w - 6, y + 10, "Output spectrum, newest on the right", { color: th.scale, size: 8.5, align: "right" });
+  legend(c, th, x + 6, y + 10, [
+    [th.cyan, "Loud", "Cyan marks sound at that frequency and time. The brighter, the louder."],
+    [th.orange, "Very loud", "Orange marks the loudest parts of the output."]]);
+  hint(x, y, w, h, "Sonogram", "Time runs left to right, newest on the right. Low frequencies are at the bottom, high at the top. Measured with an FFT of the output.");
 }
 function scope(c, th, x, y, w, h, st) {
   const z = Z(st); rr(c, x, y, w, h, 3, th.display);
   const my = y + h / 2, a = h / 2 - 8;
   c.strokeStyle = th.dline; c.lineWidth = 1;
   [-0.45, 0, 0.45].forEach(f => { c.beginPath(); c.moveTo(x + 4, my + f * a * 2); c.lineTo(x + w - 4, my + f * a * 2); c.stroke(); });
+  hint(x, y, w, h, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound.");
   if (!z.sIn.length) return;
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   for (const [arr, col, lw] of [[z.sIn, th.scale, 1], [z.sOut, th.cyan, 1.5]]) {
@@ -179,10 +217,40 @@ function scope(c, th, x, y, w, h, st) {
     c.stroke();
   }
   c.restore();
-  txt(c, x + 6, y + 10, "Input", { color: th.scale, size: 8.5, align: "left" }); txt(c, x + 36, y + 10, "Output", { color: th.cyan, size: 8.5, align: "left" });
+  legend(c, th, x + 6, y + 10, [
+    [th.scale, "Input", "The waveform going into the effect. Measured from the input signal."],
+    [th.cyan, "Output", "The waveform coming out of the effect. Measured from the output signal."]], { line: true });
   txt(c, x + w - 6, y + 10, "20 ms", { color: th.scale, size: 8.5, align: "right" });
+  hint(x + w - 36, y + 1, 32, 12, "Time Window", "The scope shows 20 milliseconds of sound.");
 }
 function wrapStep(st, dt) { sim(st, dt); }
+// Real mode: fill the same Z state that sim() fills, from the measured frame m (never from drums or dial values).
+function liveZ(st, m, dt) {
+  const z = Z(st), fin = v => (Number.isFinite(v) ? v : -120);
+  const sI = m.specIn || [], sO = m.specOut || [], pw = v => Math.pow(10, v / 10);
+  z.n++;
+  let num = 0, den = 0;
+  for (let b = 0; b < NB; b++) {
+    const i = b < sI.length ? clamp(fin(sI[b]), -120, 0) : -120, o = b < sO.length ? clamp(fin(sO[b]), -120, 0) : -120;
+    z.inS[b] += (i - z.inS[b]) * (i > z.inS[b] ? 0.7 : 0.25);
+    z.outS[b] += (o - z.outS[b]) * (o > z.outS[b] ? 0.7 : 0.25);
+    // response = out - in per band; hold the previous value where the input has no energy
+    if (i > -72) z.meas[b] += (clamp(o - i, -24, 24) - z.meas[b]) * 0.25;
+    z.peak[b] = Math.max(z.outS[b], z.peak[b] - 25 * dt);
+    const p = pw(o); den += p; num += (b / (NB - 1)) * p;
+  }
+  if (den > 1e-11) z.cent += (fq(num / den) - z.cent) * 0.3;     // spectral centroid of the output, Hz
+  const g = fin(m.gainDb);
+  z.dl += (clamp(g, -60, 60) - z.dl) * 0.2;
+  const pk = Math.max(fin(m.inPkDb ? m.inPkDb[0] : -120), fin(m.inPkDb ? m.inPkDb[1] : -120));
+  const po = Math.max(fin(m.outPkDb ? m.outPkDb[0] : -120), fin(m.outPkDb ? m.outPkDb[1] : -120));
+  st.inL = Math.max(pk, (Number.isFinite(st.inL) ? st.inL : -60) - 24 * dt);
+  st.outL = Math.max(po, (Number.isFinite(st.outL) ? st.outL : -60) - 24 * dt);
+  z.cols.push(z.outS.slice()); if (z.cols.length > 240) z.cols.shift();   // one sonogram column per measurement
+  const a = m.inScopeL || [], bq = m.scopeL || [], k = Math.min(a.length, bq.length);
+  z.sIn = []; z.sOut = [];
+  for (let i = 0; i < k; i++) { z.sIn.push(Number.isFinite(a[i]) ? a[i] : 0); z.sOut.push(Number.isFinite(bq[i]) ? bq[i] : 0); }
+}
 
 const E = "BezEQ3";
 DESIGNS["Filter"] = {
@@ -190,7 +258,7 @@ DESIGNS["Filter"] = {
   refs: [["EQEightL12.png", "EQ Eight"], ["ChannelEQL12.png", "Channel EQ"], ["AutoFilterL12.png", "Auto Filter"]],
   lead: "Visual cue: a frequency display. The grey area is the input spectrum, a line is the output spectrum, and the curve is the filter response, all measured live by FFT of the input and the output.",
   options: [
-    { id: "A", name: "EQ Eight", width: 668, step: wrapStep,
+    { id: "A", name: "EQ Eight", short: "Curve", width: 668, step: wrapStep, live: liveZ,
       why: "One wide spectrum display with the response curve on top and the dials in a row under it, like EQ Eight.",
       bullets: ["FFT of input (grey) and output (orange line); cyan curve = output minus input per band", "Driven by audio: the curve is measured, not read from the dials", "Dials in one row below; In / Out / Change readout on top"],
       draw(c, th, st, ps, vals) {
@@ -200,7 +268,7 @@ DESIGNS["Filter"] = {
         ctl(c, th, ps, vals, { x: 4, y: HEAD_H + 116, w: 592, h: 50 });
         GS(c, th, st, 668);
       } },
-    { id: "B", name: "Channel EQ", width: 668, step: wrapStep,
+    { id: "B", name: "Channel EQ", short: "Bands", width: 668, step: wrapStep, live: liveZ,
       why: "Dials in a block on the left, a curve display with a change-per-band strip in the middle, and level meters on the right, like Channel EQ.",
       bullets: ["Top: spectrum and measured response curve; bottom: change per band (16 bars)", "Input / Output gain dials and meters on the right, from the same audio", "Dial block holds up to 10 controls"],
       draw(c, th, st, ps, vals) {
@@ -211,7 +279,7 @@ DESIGNS["Filter"] = {
         diffBars(c, th, 258, HEAD_H + 112, 338, 52, st);
         GS(c, th, st, 668);
       } },
-    { id: "C", name: "Auto Filter", width: 548, step: wrapStep,
+    { id: "C", name: "Auto Filter", short: "Centre", width: 548, step: wrapStep, live: liveZ,
       why: "A big filter curve over the output spectrum with a marker on the spectral centre of the output, dials in a side block, like Auto Filter.",
       bullets: ["Thick curve = measured response; filled shape = output spectrum", "Orange marker = centre frequency of the output sound (spectral centroid)", "Dial block on the right"],
       draw(c, th, st, ps, vals) {

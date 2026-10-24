@@ -63,6 +63,48 @@
   };
   const sgn = v => (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(1);
 
+  // ---- live (real measurement) helpers ----
+  const lvArr = a => Array.isArray(a) && a.length >= 48;
+  const lvF = (v, d) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const lvPk = (a) => Math.max(lvF(a && a[0], -120), lvF(a && a[1], -120));
+  const lvSm = (prev, v, up, dn) => (typeof prev !== "number" || !Number.isFinite(prev) ? v : prev + (v - prev) * (v > prev ? up : dn));
+  // 48 measured bands -> the 72 display bins of this file
+  function lvRes(a) {
+    const o = new Array(NB);
+    for (let i = 0; i < NB; i++) {
+      const p = clamp(Math.log10(fOf(i) / 20) / 3 * 48 - 0.5, 0, 47), i0 = Math.floor(p), i1 = Math.min(47, i0 + 1), f = p - i0;
+      o[i] = lvF(a[i0], -120) * (1 - f) + lvF(a[i1], -120) * f;
+    }
+    return o;
+  }
+  // peak level of the two channels with 24 dB/s release: feeds gainStrip
+  function lvIO(st, m, dt) {
+    st.inL = Math.max(lvPk(m.inPkDb), lvF(st.inL, -120) - 24 * dt);
+    st.outL = Math.max(lvPk(m.outPkDb), lvF(st.outL, -120) - 24 * dt);
+  }
+  // per-band peak hold with a fall in dB/s; result kept in st[key]
+  function lvHold(st, key, src, dt, rate) {
+    const prev = st[key], o = new Array(48);
+    for (let i = 0; i < 48; i++) o[i] = Math.max(lvF(src[i], -120), (prev ? prev[i] : -120) - rate * dt);
+    return (st[key] = o);
+  }
+  // output minus input per band; held where the input is too quiet to compare
+  function lvResp(st, key, mi, mo) {
+    const prev = st[key] || new Array(48).fill(0), o = new Array(48);
+    for (let i = 0; i < 48; i++) {
+      const a = lvF(mi[i], -120), b = lvF(mo[i], -120);
+      o[i] = a < -80 ? prev[i] : prev[i] + (clamp(b - a, -40, 40) - prev[i]) * 0.35;
+    }
+    return (st[key] = o);
+  }
+  const lvPow = v => Math.pow(10, lvF(v, -120) / 10);
+
+  // level of (output - input) with 24 dB/s release, and the signal RMS
+  function lvNoise(st, m, dt) {
+    st.nz = Math.max(lvF(m.diffRmsDb, -120), lvF(st.nz, -120) - 24 * dt);
+    st.sig = Math.max(lvF(m.inRmsDb, -120), lvF(st.sig, -120) - 24 * dt);
+  }
+
   // ---- noise model: difference signal (out - in) with a floor and a tilt set by the dials ----
   const floorOf = vals => -78 + 48 * mean(vals);           // dBFS peak level of the added noise
   const shape = (f, m) => (m - 0.5) * 6 * l2(f / 1000);   // dB tilt across frequency
@@ -90,28 +132,55 @@
     refs: [["EQEightL12.png", "EQ Eight (spectrum)"], ["AutoFilterL12.png", "Auto Filter"], ["SaturatorL12.png", "Saturator"]],
     lead: "Visual cue: how much noise the effect adds or removes, measured live as the difference between output and input (level and spectrum).",
     options: [
-      { id: "A", name: "Zoom scope", width: 588, step: stepN,
+      { id: "A", name: "Zoom scope", short: "Zoom", width: 588, step: stepN,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt); lvNoise(st, m, dt);
+          const iL = Array.isArray(m.inScopeL) ? m.inScopeL : [], iR = Array.isArray(m.inScopeR) ? m.inScopeR : iL;
+          const oL = Array.isArray(m.scopeL) ? m.scopeL : [], oR = Array.isArray(m.scopeR) ? m.scopeR : oL;
+          const n = Math.min(iL.length, oL.length, 64), D = [];
+          let pk = 0;
+          for (let i = 0; i < n; i++) {
+            const d = lvF((oL[i] + lvF(oR[i], oL[i])) / 2 - (iL[i] + lvF(iR[i], iL[i])) / 2, 0);
+            D.push(d); pk = Math.max(pk, Math.abs(d));
+          }
+          st.ds = D;
+          const rms = Math.pow(10, st.nz / 20), tgt = Math.max(pk * 1.15, rms * 1.5, 1e-6);
+          st.dz = typeof st.dz === "number" && st.dz > tgt ? st.dz + (tgt - st.dz) * 0.1 : tgt;
+          st.dPk = lvSm(st.dPk, 20 * Math.log10(Math.max(pk, 1e-6)), 0.5, 0.2);
+          // histogram of the difference samples, +/-3 rms in 13 bins, smoothed over frames
+          const h = st.dh || (st.dh = new Array(13).fill(0)), cnt = new Array(13).fill(0), w = 3 * Math.max(rms, 1e-7);
+          D.forEach(d => { cnt[clamp(Math.floor((d / w + 1) / 2 * 13), 0, 12)]++; });
+          const mx = Math.max(1, ...cnt);
+          for (let i = 0; i < 13; i++) h[i] += (cnt[i] / mx - h[i]) * 0.4;
+        },
         why: "A very zoomed waveform that makes the noise visible sample by sample, with a noise-floor readout.",
-        bullets: ["Grey line = input, cyan steps = output samples; orange lines mark the measured noise RMS",
+        bullets: ["Cyan steps = difference samples (output minus input, 64 recent samples), auto-zoomed; orange lines mark the measured noise RMS. The grey input line is dropped in live mode: the signal is far bigger than the noise, so it cannot share the zoomed scale",
           "Histogram of the difference samples and a big noise-floor readout with effective bits",
           "Driven by the audio: RMS level of (output minus input), auto-zoomed to that level"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 588 - GAIN_W - 4, st);
-          const fl = floorOf(vals), nA = lin(fl); st.fl = fl; const zr = 5 * nA, k = Math.floor(st.t * 20);
+          const fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl; const zr = lv ? st.dz || 1e-4 : 5 * nA, k = Math.floor(st.t * 20);
           chrome(c, th, 6, TOP + 4, 72, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 412, y: TOP + 4, w: 106, h: 163 });
           const px = 116, py = TOP + 6, pw = 292, ph = 157;
           panel(c, th, px, py, pw, ph);
-          const sx = px + 8, sw = 190, sy = py + 20, sh = 80, mid = sy + sh / 2, NS = 40, stp = sw / NS;
+          const sx = px + 8, sw = 190, sy = py + 20, sh = 80, mid = sy + sh / 2, NS = lv ? 64 : 40, stp = sw / NS;
           txt(c, sx, py + 11, "Zoom", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, sx + 28, py + 11, `x ${Math.round(1 / zr)}`, { color: th.cyan, size: 9, align: "left" });
+          txt(c, sx + 28, py + 11, `x ${Math.round(1 / Math.max(zr, 1e-6))}`, { color: th.cyan, size: 9, align: "left" });
           rr(c, sx, sy, sw, sh, 0, th.meterBg);
           const Y = v => mid - clamp(v / zr, -1, 1) * sh * 0.5 * 0.9;
-          const rmsN = nA * 0.41;
+          const rmsN = lv ? Math.pow(10, lvF(st.nz, -120) / 20) : nA * 0.41;
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath(); c.moveTo(sx, mid); c.lineTo(sx + sw, mid); c.stroke();
           c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath();
           c.moveTo(sx, Y(rmsN)); c.lineTo(sx + sw, Y(rmsN)); c.moveTo(sx, Y(-rmsN)); c.lineTo(sx + sw, Y(-rmsN)); c.stroke();
+          if (lv) {
+            // the difference samples (output - input), one step per sample
+            const ds = st.ds || [];
+            c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
+            ds.forEach((d, j) => { const y = Y(d); j ? c.lineTo(sx + j * stp, y) : c.moveTo(sx + j * stp, y); c.lineTo(sx + (j + 1) * stp, y); });
+            c.stroke(); c.restore();
+          } else {
           const sl = 3 * nA * clamp(st.a * 2, 0.3, 1.5), inv = j => sl * (j - NS / 2) / (NS / 2);
           c.strokeStyle = th.dispText; c.lineWidth = 1; c.beginPath(); c.moveTo(sx, Y(inv(0))); c.lineTo(sx + sw, Y(inv(NS))); c.stroke();
           c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
@@ -120,42 +189,71 @@
             j ? c.lineTo(sx + j * stp, y) : c.moveTo(sx + j * stp, y); c.lineTo(sx + (j + 1) * stp, y);
           }
           c.stroke(); c.restore();
-          txt(c, sx + 3, Y(rmsN) - 3, "RMS", { color: th.orange, size: 8, align: "left" });
+          }
+          legend(c, th, sx + 70, py + 11, (lv ? [] : [[th.dispText, "In", "Grey line: the clean input signal, drawn as a reference."]]).concat([
+            [th.cyan, "Out - in", "Cyan steps: output minus input, sample by sample. This is the noise."],
+            [th.orange, "RMS", "Orange lines: the average size (RMS) of the noise, drawn above and below zero."]]));
+          hint(sx, sy, sw, sh, "Difference Scope", "A very zoomed view of output minus input, one step per sample. If the effect adds no noise, the line is flat in the middle. Zoom adjusts to the noise level.");
+          hint(sx, Y(rmsN) - 4, sw, 8, "RMS Line (Upper)", "The average size (RMS) of the noise. Measured from output minus input.");
+          hint(sx, Y(-rmsN) - 4, sw, 8, "RMS Line (Lower)", "The same RMS level on the negative side of zero.");
+          hint(sx, py + 2, 64, 12, "Zoom Factor", "How many times the scope is magnified. Higher means the noise is smaller.");
           // histogram of difference samples
           const hx = sx + sw + 10, hw = pw - (hx - px) - 8, nb = 13, bw = hw / nb;
           txt(c, hx + hw / 2, py + 11, "Samples", { color: th.scale, size: 8.5 });
           for (let i = 0; i < nb; i++) {
-            const u = (i - (nb - 1) / 2) / ((nb - 1) / 2), p = clamp(Math.max(0, 1 - Math.abs(u)) + 0.07 * noise(i * 5 + k), 0.02, 1);
+            const u = (i - (nb - 1) / 2) / ((nb - 1) / 2), p = lv ? clamp((st.dh || [])[i] || 0, 0.02, 1) : clamp(Math.max(0, 1 - Math.abs(u)) + 0.07 * noise(i * 5 + k), 0.02, 1);
             c.fillStyle = th.cyan; c.fillRect(hx + i * bw + 0.5, sy + sh - p * sh, bw - 1, p * sh);
           }
           const floor = db(rmsN);
+          hint(hx, sy, hw, sh, "Sample Histogram", "How often each size of noise sample occurs. A tall middle with thin sides is normal noise. Measured from output minus input.");
+          hint(sx, py + 104, 180, 40, "Noise Floor", "Average level of the noise in dBFS (0 dBFS is full scale). Lower is quieter. Measured as the RMS of output minus input.");
+          hint(px + pw - 62, py + 128, 58, 14, "Effective Bits", "How many bits of resolution remain above the noise. More bits means a cleaner sound.");
+          hint(px + pw - 62, py + 104, 58, 12, "Noise Peak", "Largest noise sample seen recently, in dB.");
           txt(c, sx, py + 114, "Noise floor (RMS of out - in)", { color: th.scale, size: 8.5, align: "left" });
           txt(c, sx, py + 138, `${floor.toFixed(1)} dBFS`, { color: th.cyan, size: 17, bold: true, align: "left" });
           txt(c, px + pw - 8, py + 138, `~ ${Math.max(0, (-floor - 1.76) / 6.02).toFixed(1)} bit`, { color: th.orange, size: 10, align: "right" });
-          txt(c, px + pw - 8, py + 114, `Peak ${fl.toFixed(1)}`, { color: th.dispText, size: 8.5, align: "right" });
+          txt(c, px + pw - 8, py + 114, `Peak ${(lv ? lvF(st.dPk, -120) : fl).toFixed(1)}`, { color: th.dispText, size: 8.5, align: "right" });
         } },
-      { id: "B", name: "Floor spectrum", width: 548, step: stepN,
+      { id: "B", name: "Floor spectrum", short: "Spectrum", width: 548, step: stepN,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt); lvNoise(st, m, dt);
+          if (!lvArr(m.specIn) || !lvArr(m.specOut)) return;
+          st.lvI = lvRes(lvHold(st, "hI48", m.specIn, dt, 50));
+          st.lvO = lvRes(lvHold(st, "hO48", m.specOut, dt, 50));
+          if (lvArr(m.specDiff)) st.lvN = lvRes(lvHold(st, "hD48", m.specDiff, dt, 50));
+        },
         why: "Signal spectrum with the added noise drawn as its own orange band, and SNR in the header, like EQ Eight's analyser.",
         bullets: ["Grey = input spectrum, orange = spectrum of (output minus input), cyan = output spectrum",
           "Header readouts: signal level, noise floor, signal-to-noise ratio",
           "Driven by the audio: FFT of input, output and their difference; the dial row sits underneath so 8 or more controls fit"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 548 - GAIN_W - 4, st);
-          const m = mean(vals), fl = floorOf(vals), nA = lin(fl); st.fl = fl;
+          const m = mean(vals), fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl;
           const px = 4, py = TOP + 4, pw = 472, ph = 104;
           panel(c, th, px, py, pw, ph);
           chrome(c, th, px + 4, py + 3, 84, NAME);
           noRow(c, th, ps, vals, { x: 4, y: TOP + 112, w: 472, h: 52 });
-          const sp = st.spI || new Array(NB).fill(-90);
-          const sig = db(st.rms || 0.01), nz = db(nA * 0.41);
+          const sp = lv ? st.lvI || new Array(NB).fill(-120) : st.spI || new Array(NB).fill(-90);
+          const sig = lv ? lvF(st.sig, -120) : db(st.rms || 0.01), nz = lv ? lvF(st.nz, -120) : db(nA * 0.41);
           [["Signal", sig.toFixed(1), th.cyan, 150], ["Noise", nz.toFixed(1), th.orange, 255], ["SNR", (sig - nz).toFixed(1) + " dB", th.green, 360]].forEach(([l, v, col, o]) => {
             txt(c, px + o, py + 13, l, { color: th.dispText, size: 9, align: "left" });
             txt(c, px + o + (l === "SNR" ? 22 : 33), py + 13, v, { color: col, size: 9, align: "left" });
           });
-          const gx = px + 24, gy = py + 21, gw = pw - 48, gh = 70;
+          const gx = px + 24, gy = py + 21, gw = pw - 48, gh = 62;
+          legend(c, th, gx, py + 92, [
+            [greyFill(), "Input", "Grey area: spectrum of the signal going in."],
+            [th.orange, "Noise", "Orange area: spectrum of output minus input. This is the noise the effect adds."],
+            [th.cyan, "Output", "Cyan line: spectrum of the signal coming out."]]);
+          hint(px + 148, py + 3, 100, 13, "Signal Level", "Average level of the input signal in dB. Measured as RMS.");
+          hint(px + 253, py + 3, 100, 13, "Noise Level", "Average level of the added noise in dB. Measured as RMS of output minus input.");
+          hint(px + 358, py + 3, 80, 13, "Signal-to-Noise Ratio", "Signal level minus noise level, in dB. Higher is cleaner.");
+          hint(gx, gy, gw, gh, "Spectrum Display", "Frequency from 20 Hz to 20 kHz, left to right. Grey area: input. Orange area: added noise. Cyan line: output. Measured with an FFT.");
+          hint(gx - 24, gy, 24, gh, "Level Scale", "Level in dB. Higher is louder.");
+          hint(gx, py + ph - 12, gw, 10, "Frequency Scale", "Frequency in Hz. Bass is at the left, treble at the right.");
           const Y = v => gy + gh * (1 - clamp((v + 100) / 94, 0, 1));
           const noiseDb = [], outDb = [];
           for (let i = 0; i < NB; i++) {
+            if (lv) { noiseDb.push(st.lvN ? st.lvN[i] : -120); outDb.push(st.lvO ? st.lvO[i] : -120); continue; }
             const n = fl - 14 + shape(fOf(i), m) + 2 * noise(i * 3 + Math.floor(st.t * 18));
             noiseDb.push(n); outDb.push(10 * Math.log10(Math.pow(10, sp[i] / 10) + Math.pow(10, n / 10)));
           }
@@ -176,14 +274,22 @@
           [-20, -40, -60, -80].forEach(v => txt(c, gx - 3, Y(v) + 3, String(v), { color: th.scale, size: 8.5, align: "right" }));
           hzLabels(c, th, gx, py + ph - 3, gw);
         } },
-      { id: "C", name: "Spectrogram", width: 588, step: stepN,
+      { id: "C", name: "Spectrogram", short: "Sonogram", width: 588, step: stepN,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt); lvNoise(st, m, dt);
+          // one column per measurement (about 30 per second)
+          const src = lvArr(m.specDiff) ? m.specDiff : new Array(48).fill(-120), col = [];
+          for (let r = 0; r < 24; r++) col.push((lvF(src[2 * r], -120) + lvF(src[2 * r + 1], -120)) / 2);
+          st.lcols = st.lcols || [];
+          st.lcols.push(col); if (st.lcols.length > 80) st.lcols.shift();
+        },
         why: "A scrolling spectrogram of only the added or removed signal, with a noise-floor meter, like a Spectrum device.",
         bullets: ["Time runs right to left, frequency bottom (20 Hz) to top (20 kHz); brighter orange = more noise",
           "Vertical meter and big number show the current noise floor in dBFS",
           "Driven by the audio: short-time FFT of (output minus input)"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 588 - GAIN_W - 4, st);
-          const m = mean(vals), fl = floorOf(vals); st.fl = fl;
+          const m = mean(vals), fl = floorOf(vals), lv = !!st.lv; st.fl = fl;
           chrome(c, th, 6, TOP + 4, 72, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 412, y: TOP + 4, w: 106, h: 163 });
           const px = 116, py = TOP + 6, pw = 292, ph = 157;
@@ -192,11 +298,12 @@
           txt(c, sx, py + 11, "Added / removed signal", { color: th.scale, size: 8.5, align: "left" });
           c.fillStyle = th.meterBg; c.fillRect(sx, sy, sw, sh);
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
-          const cols = st.cols || [], nc = Math.min(cols.length, Math.floor(sw / cw));
+          const cols = (lv ? st.lcols : st.cols) || [], nc = Math.min(cols.length, Math.floor(sw / cw));
           c.fillStyle = th.orange;
           for (let ci = 0; ci < nc; ci++) {
             const col = cols[cols.length - 1 - ci], x = sx + sw - (ci + 1) * cw;
             for (let r = 0; r < rows; r++) {
+              if (lv) { c.globalAlpha = clamp((lvF(col[r], -120) + 80) / 40, 0.03, 1); c.fillRect(x, sy + sh - (r + 1) * rh, cw, rh); continue; }
               const f = 20 * Math.pow(1000, (r + 0.5) / rows);
               const v = fl - 8 + shape(f, m) + 8 * col.e * (r < 8 ? 1 : 0.5) + 3 * col.j[r] - 6 * r / rows + 3;
               c.globalAlpha = clamp((v - fl + 18) / 26, 0.05, 1) * 0.95;
@@ -208,18 +315,23 @@
             txt(c, sx - 3, sy + sh - sh * Math.log10(f / 20) / 3 + (f > 10000 ? 8 : 3), s, { color: th.scale, size: 8.5, align: "right" }));
           txt(c, sx + sw, py + 126, "now", { color: th.scale, size: 8.5, align: "right" });
           txt(c, sx, py + 126, "2 s ago", { color: th.scale, size: 8.5, align: "left" });
-          c.fillStyle = th.dispText; c.globalAlpha = 1;
-          txt(c, sx, py + 148, "Level:", { color: th.scale, size: 8.5, align: "left" });
-          for (let i = 0; i < 8; i++) { c.globalAlpha = (i + 1) / 8; c.fillStyle = th.orange; c.fillRect(sx + 30 + i * 9, py + 141, 8, 8); }
           c.globalAlpha = 1;
-          txt(c, sx + 108, py + 148, "dim = floor, bright = +10 dB", { color: th.scale, size: 8.5, align: "left" });
+          legend(c, th, sx, py + 148, [
+            [th.orange, "Noise level", lv ? "Orange colour: noise in each band. Dim is -80 dB or lower, bright is -40 dB or higher. The Floor meter uses the same colour." : "Orange colour: noise in each band. Dim is at the floor, bright is 10 dB above it. The Floor meter uses the same colour."],
+            [th.cyan, "Floor reading", "Cyan number: the average level of the noise now, in dBFS."]]);
+          hint(sx, sy, sw, sh, "Noise Spectrogram", "Frequency goes up, time goes left. Brighter orange means more noise at that frequency. Measured with an FFT of output minus input.");
+          hint(sx - 26, sy, 24, sh, "Frequency Scale", "Frequency in Hz. 20 Hz at the bottom, 20 kHz at the top.");
+          hint(sx, py + 117, sw, 11, "Time Scale", "Time runs from the left (older) to the right (now).");
           // noise floor meter
           const mx = px + 246, mw = 12;
           txt(c, mx + mw / 2 + 2, py + 11, "Floor", { color: th.dispText, size: 8.5 });
-          const rmsDb = fl - 7.7;
-          meterV(c, th, mx, sy, mw, sh, clamp((rmsDb + 110) / 60, 0, 1), false, th.orange);
-          [-60, -80, -100].forEach(v => { const yy = sy + sh * (1 - (v + 110) / 60); c.fillStyle = th.scale; c.fillRect(mx + mw, yy, 3, 1); txt(c, mx - 2, yy + 3, String(v), { color: th.scale, size: 8, align: "right" }); });
-          txt(c, mx + mw / 2 + 2, py + 126, rmsDb.toFixed(1), { color: th.cyan, size: 11, bold: true });
+          hint(mx - 2, sy, mw + 6, sh, "Noise Floor Meter", "Bar height shows the average noise level now. Taller means more noise. Measured as RMS of output minus input.");
+          hint(mx - 24, sy, 22, sh, "Floor Scale", "Noise level in dB.");
+          hint(mx - 8, py + 117, 32, 24, "Noise Floor Reading", "The noise level now as a number, in dBFS (0 is full scale). Lower is quieter.");
+          const rmsDb = lv ? lvF(st.nz, -120) : fl - 7.7, lo = lv ? 100 : 110, span = lv ? 80 : 60;
+          meterV(c, th, mx, sy, mw, sh, clamp((rmsDb + lo) / span, 0, 1), false, th.orange);
+          (lv ? [-30, -50, -70, -90] : [-60, -80, -100]).forEach(v => { const yy = sy + sh * (1 - (v + lo) / span); c.fillStyle = th.scale; c.fillRect(mx + mw, yy, 3, 1); txt(c, mx - 2, yy + 3, String(v), { color: th.scale, size: 8, align: "right" }); });
+          txt(c, mx + mw / 2 + 2, py + 126, Math.max(-120, rmsDb).toFixed(1), { color: th.cyan, size: 11, bold: true });
           txt(c, mx + mw / 2 + 2, py + 138, "dBFS", { color: th.scale, size: 8.5 });
         } },
     ],

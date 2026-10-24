@@ -1,57 +1,100 @@
 {
  "Ambience": {
   "effect": "TapeDelay",
-  "option": "A",
-  "tabs": [],
-  "width": 608
+  "option": "C+A+B",
+  "tabs": [
+   "Spectrum",
+   "Taps",
+   "Scope"
+  ],
+  "vertical": true,
+  "width": 628
  },
  "Amp Sims": {
   "effect": "ChimeyGuitar",
-  "option": "A",
-  "tabs": [],
+  "option": "B+C",
+  "tabs": [
+   "Spectrum",
+   "Scope"
+  ],
+  "vertical": true,
   "width": 700
  },
  "Bass": {
   "effect": "DubCenter",
-  "option": "A",
-  "tabs": [],
-  "width": 668
+  "option": "A+C",
+  "tabs": [
+   "Spectrum",
+   "Bands"
+  ],
+  "vertical": true,
+  "width": 700
  },
  "Biquads": {
   "effect": "BiquadNonLin",
-  "option": "A",
-  "tabs": [],
-  "width": 528
+  "option": "A+B+C",
+  "tabs": [
+   "Response",
+   "Mag+Phase",
+   "Scope"
+  ],
+  "vertical": true,
+  "width": 568
  },
  "Brightness": {
   "effect": "Air",
-  "option": "A",
-  "tabs": [],
+  "option": "B+A+C",
+  "tabs": [
+   "Bars",
+   "Spectrum",
+   "Bands"
+  ],
+  "vertical": true,
   "width": 668
  },
  "Clipping": {
   "effect": "ADClip9",
-  "option": "A",
-  "tabs": [],
-  "width": 548
+  "option": "A+B+C",
+  "tabs": [
+   "Limiter",
+   "Scope",
+   "Curve"
+  ],
+  "vertical": true,
+  "width": 608
  },
  "Consoles": {
   "effect": "ConsoleMCChannel",
-  "option": "A",
-  "tabs": [],
-  "width": 592
+  "option": "C+A+B",
+  "tabs": [
+   "Tone",
+   "Stereo",
+   "Meters"
+  ],
+  "vertical": true,
+  "width": 608
  },
  "Distortion": {
   "effect": "Dirt",
-  "option": "A",
-  "tabs": [],
-  "width": 548
+  "option": "A+B+C",
+  "tabs": [
+   "Scope",
+   "Spectrum",
+   "History"
+  ],
+  "vertical": true,
+  "width": 668
  },
  "Dithers": {
   "effect": "BuildATPDF",
-  "option": "A",
-  "tabs": [],
-  "width": 668
+  "option": "B+A+C",
+  "tabs": [
+   "Spectrum",
+   "Waveform",
+   "Error"
+  ],
+  "vertical": true,
+  "width": 688
  },
  "Dynamics": {
   "effect": "Pressure5",
@@ -60,84 +103,149 @@
    "Needle",
    "Activity"
   ],
+  "vertical": false,
   "width": 556
  },
  "Effects": {
   "effect": "Energy",
-  "option": "A",
-  "tabs": [],
-  "width": 688
+  "option": "A+B+C",
+  "tabs": [
+   "Curve",
+   "Spectrum",
+   "Scope"
+  ],
+  "vertical": true,
+  "width": 700
  },
  "Filter": {
   "effect": "BezEQ3",
-  "option": "A",
-  "tabs": [],
+  "option": "A+B+C",
+  "tabs": [
+   "Curve",
+   "Bands",
+   "Centre"
+  ],
+  "vertical": true,
   "width": 668
  },
  "Lo-Fi": {
   "effect": "DeRez5",
-  "option": "A",
-  "tabs": [],
+  "option": "A+B+C",
+  "tabs": [
+   "Scope",
+   "Bandwidth",
+   "Wear"
+  ],
+  "vertical": true,
   "width": 700
  },
  "Noise": {
   "effect": "Noise",
-  "option": "A",
-  "tabs": [],
+  "option": "B+A+C",
+  "tabs": [
+   "Spectrum",
+   "Zoom",
+   "Sonogram"
+  ],
+  "vertical": true,
   "width": 588
  },
  "Reverb": {
   "effect": "Galactic3",
-  "option": "A",
-  "tabs": [],
+  "option": "B+C",
+  "tabs": [
+   "Hybrid",
+   "Decay"
+  ],
+  "vertical": true,
   "width": 636
  },
  "Saturation": {
   "effect": "Desk4",
-  "option": "A",
-  "tabs": [],
-  "width": 498
+  "option": "B+A+C",
+  "tabs": [
+   "Harmonics",
+   "Curve",
+   "Scope"
+  ],
+  "vertical": true,
+  "width": 588
  },
  "Stereo": {
   "effect": "Srsly3",
-  "option": "A",
-  "tabs": [],
-  "width": 588
+  "option": "A+B+C",
+  "tabs": [
+   "Vector",
+   "Meters",
+   "History"
+  ],
+  "vertical": true,
+  "width": 648
  },
  "Subtlety": {
   "effect": "Mastering2",
-  "option": "A",
-  "tabs": [],
+  "option": "B+A+C",
+  "tabs": [
+   "Residual",
+   "Null test",
+   "Stereo"
+  ],
+  "vertical": true,
   "width": 638
  },
  "Tape": {
   "effect": "ToTape6",
-  "option": "A",
-  "tabs": [],
-  "width": 608
+  "option": "B+A+C",
+  "tabs": [
+   "Spectrum",
+   "Curve",
+   "Scope"
+  ],
+  "vertical": true,
+  "width": 648
  },
  "Tone Color": {
   "effect": "Luxor",
-  "option": "A",
-  "tabs": [],
-  "width": 450
+  "option": "C+A+B",
+  "tabs": [
+   "Scope",
+   "Curve",
+   "Harmonics"
+  ],
+  "vertical": true,
+  "width": 568
  },
  "Unclassified": {
   "effect": "CStrip",
-  "option": "A",
-  "tabs": [],
+  "option": "A+B+C",
+  "tabs": [
+   "Spectrum",
+   "Curve",
+   "Response"
+  ],
+  "vertical": true,
   "width": 700
  },
  "Utility": {
   "effect": "EveryTrim",
-  "option": "A",
-  "tabs": [],
-  "width": 628
+  "option": "B+A+C",
+  "tabs": [
+   "Mid/Side",
+   "Scope",
+   "Compare"
+  ],
+  "vertical": true,
+  "width": 668
  },
  "XYZ Filters": {
   "effect": "YBandpass",
-  "option": "A",
-  "tabs": [],
-  "width": 568
+  "option": "C+A+B",
+  "tabs": [
+   "Bands",
+   "Spectrum",
+   "Sonogram"
+  ],
+  "vertical": true,
+  "width": 588
  }
 }

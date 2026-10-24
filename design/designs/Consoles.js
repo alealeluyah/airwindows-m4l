@@ -63,6 +63,42 @@
   };
   const sgn = v => (v >= 0 ? "+" : "-") + Math.abs(v).toFixed(1);
 
+  // ---- live (real measurement) helpers ----
+  const lvArr = a => Array.isArray(a) && a.length >= 48;
+  const lvF = (v, d) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  const lvPk = (a) => Math.max(lvF(a && a[0], -120), lvF(a && a[1], -120));
+  const lvSm = (prev, v, up, dn) => (typeof prev !== "number" || !Number.isFinite(prev) ? v : prev + (v - prev) * (v > prev ? up : dn));
+  // 48 measured bands -> the 72 display bins of this file
+  function lvRes(a) {
+    const o = new Array(NB);
+    for (let i = 0; i < NB; i++) {
+      const p = clamp(Math.log10(fOf(i) / 20) / 3 * 48 - 0.5, 0, 47), i0 = Math.floor(p), i1 = Math.min(47, i0 + 1), f = p - i0;
+      o[i] = lvF(a[i0], -120) * (1 - f) + lvF(a[i1], -120) * f;
+    }
+    return o;
+  }
+  // peak level of the two channels with 24 dB/s release: feeds gainStrip
+  function lvIO(st, m, dt) {
+    st.inL = Math.max(lvPk(m.inPkDb), lvF(st.inL, -120) - 24 * dt);
+    st.outL = Math.max(lvPk(m.outPkDb), lvF(st.outL, -120) - 24 * dt);
+  }
+  // per-band peak hold with a fall in dB/s; result kept in st[key]
+  function lvHold(st, key, src, dt, rate) {
+    const prev = st[key], o = new Array(48);
+    for (let i = 0; i < 48; i++) o[i] = Math.max(lvF(src[i], -120), (prev ? prev[i] : -120) - rate * dt);
+    return (st[key] = o);
+  }
+  // output minus input per band; held where the input is too quiet to compare
+  function lvResp(st, key, mi, mo) {
+    const prev = st[key] || new Array(48).fill(0), o = new Array(48);
+    for (let i = 0; i < 48; i++) {
+      const a = lvF(mi[i], -120), b = lvF(mo[i], -120);
+      o[i] = a < -80 ? prev[i] : prev[i] + (clamp(b - a, -40, 40) - prev[i]) * 0.35;
+    }
+    return (st[key] = o);
+  }
+  const lvPow = v => Math.pow(10, lvF(v, -120) / 10);
+
   // ---- console model: unity small-signal gain, soft ceiling, slightly narrower image, gentle tilt ----
   const kOf = vals => 1 + 2 * mean(vals);
   const csat = (x, k) => x / Math.sqrt(1 + 0.5 * (k - 1) * x * x);
@@ -88,14 +124,33 @@
     refs: [["UtilityL12.png", "Utility"], ["LimiterL12.png", "Limiter (meters)"], ["ChannelEQL12.png", "Channel EQ"]],
     lead: "Visual cue: what the console stage does to the signal between its input and output: stereo image, level, or tone per band.",
     options: [
-      { id: "A", name: "Stereo image", width: 592, step: stepC,
+      { id: "A", name: "Stereo image", short: "Stereo", width: 592, step: stepC,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt);
+          const pairs = (a, b) => { const o = [], n = Math.min(Array.isArray(a) ? a.length : 0, Array.isArray(b) ? b.length : 0, 64); for (let i = 0; i < n; i++) if (Number.isFinite(a[i]) && Number.isFinite(b[i])) o.push([a[i], b[i]]); return o; };
+          const vi = pairs(m.inScopeL, m.inScopeR), vo = pairs(m.scopeL, m.scopeR);
+          let ext = 0;
+          vi.concat(vo).forEach(([l, r]) => { ext = Math.max(ext, Math.abs(l), Math.abs(r)); });
+          const tgt = Math.max(0.02, ext * 1.1);
+          st.vz = typeof st.vz === "number" && st.vz > tgt ? st.vz + (tgt - st.vz) * 0.08 : tgt;
+          st.vi = vi; st.vo = vo;
+          const ms = Array.isArray(m.ms) ? m.ms : [], oM = lvF(ms[2], -120), oS = lvF(ms[3], -120);
+          st.corr = lvSm(st.corr, clamp(lvF(m.corr, 0), -1, 1), 0.4, 0.4);
+          st.midDb = Math.max(oM, lvF(st.midDb, -120) - 24 * dt);
+          st.sideDb = Math.max(oS, lvF(st.sideDb, -120) - 24 * dt);
+          if (oM > -90) st.wid = lvSm(st.wid, Math.min(999, 100 * Math.pow(10, (oS - oM) / 20)), 0.3, 0.3);
+          if (st.wid === undefined) st.wid = 0;
+          const pl = lvF(m.outPkDb && m.outPkDb[0], -120), pr = lvF(m.outPkDb && m.outPkDb[1], -120);
+          if (Math.max(pl, pr) > -90) st.balDb = lvSm(st.balDb, clamp(pl - pr, -24, 24), 0.2, 0.2);
+          if (st.balDb === undefined) st.balDb = 0;
+        },
         why: "Vectorscope with correlation, mid and side levels and a width readout, like Utility's stereo tools.",
         bullets: ["Vectorscope: grey = input, cyan = output (left/right samples plotted on a diamond)",
           "Correlation bar -1 to +1, mid and side level bars, width % (side vs mid)",
           "Driven by the audio: left/right output samples, so any console shows its own width change"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 592 - GAIN_W - 4, st);
-          const k = kOf(vals), w = wOf(vals); init(st, k);
+          const k = kOf(vals), w = wOf(vals), lv = !!st.lv; init(st, k);
           const a = st.a, s = st.side;
           chrome(c, th, 6, TOP + 4, 84, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 418, y: TOP + 4, w: 104, h: 163 });
@@ -107,7 +162,13 @@
           c.moveTo(cx, by); c.lineTo(cx, by + bs); c.moveTo(bx, cy); c.lineTo(bx + bs, cy);
           c.moveTo(bx, by + bs); c.lineTo(bx + bs, by); c.moveTo(bx, by); c.lineTo(bx + bs, by + bs); c.stroke();
           txt(c, bx + 9, by + 10, "L", { color: th.scale, size: 8.5 }); txt(c, bx + bs - 9, by + 10, "R", { color: th.scale, size: 8.5 });
-          txt(c, cx, py + 11, "Vectorscope", { color: th.scale, size: 8.5 });
+          txt(c, bx + bs, py + 11, "Vectorscope", { color: th.scale, size: 8.5, align: "right" });
+          legend(c, th, bx, py + 11, [
+            [th.dispText, "In", "Grey trace: the left and right samples going into the console."],
+            [th.cyan, "Out", "Cyan trace: the left and right samples coming out of the console."]]);
+          hint(bx, by, bs, bs, "Vectorscope", "Each left and right sample pair is a point. A tall thin line means mono, a wide cloud means wide stereo. Measured from the input and output samples.");
+          hint(bx, by, 20, 12, "Left Channel", "Points toward the upper left are louder in the left channel.");
+          hint(bx + bs - 20, by, 20, 12, "Right Channel", "Points toward the upper right are louder in the right channel.");
           let sLR = 0, sLL = 0, sRR = 0, sM = 0, sS = 0;
           const N = 140, sc = hs / 1.4;
           const line = (col, lw, f) => {
@@ -122,65 +183,128 @@
             }
             c.stroke();
           };
+          if (lv) {
+            const zs = hs / (1.4 * (st.vz || 1));
+            [[th.dispText, st.vi], [th.cyan, st.vo]].forEach(([col, arr]) => {
+              if (!arr || !arr.length) return;
+              c.strokeStyle = col; c.lineWidth = 1.5; c.beginPath();
+              arr.forEach(([L, R], i) => {
+                const x = clamp(cx + (L - R) * 0.707 * zs, bx, bx + bs), y = clamp(cy - (L + R) * 0.707 * zs, by, by + bs);
+                i ? c.lineTo(x, y) : c.moveTo(x, y);
+              });
+              c.stroke();
+            });
+            txt(c, bx + bs - 3, by + bs - 4, `+/-${(st.vz || 1).toFixed(2)}`, { color: th.scale, size: 8, align: "right" });
+          } else {
           line(th.dispText, 1.5, (m, sd) => [m + sd, m - sd]);
           line(th.cyan, 1.5, (m, sd) => [csat(m + sd * w, k), csat(m - sd * w, k)]);
-          const corr = sLR / Math.sqrt(Math.max(sLL * sRR, 1e-9));
-          const mDb = db(Math.sqrt(sM / N)), sDb = db(Math.sqrt(sS / N));
+          }
+          const corr = lv ? st.corr || 0 : sLR / Math.sqrt(Math.max(sLL * sRR, 1e-9));
+          const mDb = lv ? lvF(st.midDb, -120) : db(Math.sqrt(sM / N)), sDb = lv ? lvF(st.sideDb, -120) : db(Math.sqrt(sS / N));
           const rx = px + 142, rw = pw - 150;
+          hint(rx, py + 8, rw, 22, "Mid Level", "Level of the centre of the stereo image (left plus right), in dB. Measured from the output.");
+          hint(rx, py + 36, rw, 22, "Side Level", "Level of the sides of the stereo image (left minus right), in dB. Measured from the output.");
+          hint(rx, py + 68, rw, 34, "Width", "How wide the stereo image is: side level against mid level, in percent. 0 % is mono.");
+          hint(rx, py + 108, rw, 14, "Balance", "Difference in level between the left and right channels, in dB. Plus means louder on the left.");
           txt(c, rx, py + 18, "Mid", { color: th.dispText, align: "left" });
           txt(c, rx + rw, py + 18, `${mDb.toFixed(1)} dB`, { color: th.cyan, align: "right" });
-          hbar(c, th, rx, py + 22, rw, 6, 1 + mDb / 60, th.cyan);
+          hbar(c, th, rx, py + 22, rw, 6, 1 + Math.max(mDb, -60) / 60, th.cyan);
           txt(c, rx, py + 46, "Side", { color: th.dispText, align: "left" });
           txt(c, rx + rw, py + 46, `${sDb.toFixed(1)} dB`, { color: th.orange, align: "right" });
-          hbar(c, th, rx, py + 50, rw, 6, 1 + sDb / 60, th.orange);
+          hbar(c, th, rx, py + 50, rw, 6, 1 + Math.max(sDb, -60) / 60, th.orange);
           txt(c, rx, py + 76, "Width", { color: th.dispText, align: "left" });
-          txt(c, rx + rw, py + 98, `${Math.round(100 * Math.sqrt(sS / Math.max(sM, 1e-9)))} %`, { color: th.cyan, size: 18, bold: true, align: "right" });
+          txt(c, rx + rw, py + 98, `${lv ? Math.round(st.wid || 0) : Math.round(100 * Math.sqrt(sS / Math.max(sM, 1e-9)))} %`, { color: th.cyan, size: 18, bold: true, align: "right" });
           txt(c, rx, py + 118, "Balance", { color: th.dispText, align: "left" });
-          txt(c, rx + rw, py + 118, `${sgn(20 * Math.log10((1 + st.bal) / (1 - st.bal)))} dB`, { color: th.orange, align: "right" });
+          txt(c, rx + rw, py + 118, `${lv ? sgn(st.balDb || 0) : sgn(20 * Math.log10((1 + st.bal) / (1 - st.bal)))} dB`, { color: th.orange, align: "right" });
           const cbx = px + 8, cbw = pw - 16, cby = py + 139;
           c.fillStyle = th.meterBg; c.fillRect(cbx, cby, cbw, 7);
           c.fillStyle = corr >= 0 ? th.green : th.orange;
           c.fillRect(corr >= 0 ? cbx + cbw / 2 : cbx + cbw / 2 + corr * cbw / 2, cby, Math.abs(corr) * cbw / 2, 7);
           c.fillStyle = th.scale; c.fillRect(cbx + cbw / 2 - 0.5, cby - 2, 1, 11);
+          hint(cbx, cby - 2, cbw, 11, "Correlation Bar", "Shows if left and right move together. Right of the centre (green): in phase, safe in mono. Left of the centre (orange): out of phase, may cancel in mono.");
+          legend(c, th, cbx + 18, py + ph - 3, [[th.orange, "Out of phase", "Orange bar to the left: left and right work against each other and can cancel in mono."]]);
+          legend(c, th, cbx + cbw - 66, py + ph - 3, [[th.green, "In phase", "Green bar to the right: left and right move together and stay full in mono."]]);
           txt(c, cbx, py + ph - 3, "-1", { color: th.scale, size: 8.5, align: "left" });
           txt(c, cbx + cbw, py + ph - 3, "+1", { color: th.scale, size: 8.5, align: "right" });
           txt(c, cbx + cbw / 2, py + ph - 3, `Correlation ${sgn(corr).replace("+", "+")}`, { color: th.dispText, size: 8.5 });
         } },
-      { id: "B", name: "Channel strip", width: 608, step: stepC,
+      { id: "B", name: "Channel strip", short: "Meters", width: 608, step: stepC,
+        live(st, m, dt) {
+          st.lv = 1; st.lt = (st.lt || 0) + dt;
+          lvIO(st, m, dt);
+          const cp = (key, hkey, tkey, arr) => {
+            const pk = st[key] || (st[key] = [-120, -120]), hd = st[hkey] || (st[hkey] = [-120, -120]), tm = st[tkey] || (st[tkey] = [0, 0]);
+            for (let ch = 0; ch < 2; ch++) {
+              const v = lvF(arr && arr[ch], -120);
+              pk[ch] = Math.max(v, pk[ch] - 24 * dt);
+              if (pk[ch] >= hd[ch]) { hd[ch] = pk[ch]; tm[ch] = st.lt; } else if (st.lt - tm[ch] > 1.2) hd[ch] = Math.max(pk[ch], hd[ch] - 30 * dt);
+            }
+          };
+          cp("pkI2", "hI2", "tI2", m.inPkDb); cp("pkO2", "hO2", "tO2", m.outPkDb);
+          // mono RMS only is measured: per-channel bars are that RMS shifted by the channel's peak imbalance
+          const rmsCh = (rms, arr) => { const l = lvF(arr && arr[0], -120), r = lvF(arr && arr[1], -120), mx = Math.max(l, r); return [rms + (l - mx), rms + (r - mx)].map(v => Math.max(-120, v)); };
+          st.rI = lvSm(st.rI, lvF(m.inRmsDb, -120), 0.6, 0.12); st.rO = lvSm(st.rO, lvF(m.outRmsDb, -120), 0.6, 0.12);
+          st.rI2 = rmsCh(st.rI, m.inPkDb); st.rO2 = rmsCh(st.rO, m.outPkDb);
+          st.hist.push({ a: lvF(m.inPk, 0), o: lvF(m.outPk, 0) }); if (st.hist.length > 700) st.hist.shift();
+          if (lvF(m.inRmsDb, -120) > -90) {
+            st.gnow = lvSm(st.gnow, clamp(lvF(m.gainDb, 0), -40, 40), 0.4, 0.4);
+            st.cIn = lvSm(st.cIn, lvPk(m.inPkDb) - m.inRmsDb, 0.4, 0.4); st.cOut = lvSm(st.cOut, lvPk(m.outPkDb) - lvF(m.outRmsDb, -120), 0.4, 0.4);
+          }
+          ["gnow", "cIn", "cOut"].forEach(k => { if (st[k] === undefined) st[k] = 0; });
+        },
         why: "Stereo input and output meters with RMS, peak and peak hold, plus a level history, like a Live mixer strip or Limiter.",
         bullets: ["Left pair = input meters, right pair = output meters: RMS bar, peak tick, orange hold line, clip lamp",
           "History: input level in grey, output level in cyan; readouts for gain change and crest factor",
           "Driven by the audio: peak and RMS of the input and the output signal"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 608 - GAIN_W - 4, st);
-          const k = kOf(vals); init(st, k);
+          const k = kOf(vals), lv = !!st.lv; init(st, k);
           const a = st.a, o = csat(a, k);
           chrome(c, th, 6, TOP + 4, 84, NAME);
           place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 430, y: TOP + 4, w: 108, h: 163 });
           const px = 124, py = TOP + 6, pw = 300, ph = 157;
           panel(c, th, px, py, pw, ph);
           const f = d => clamp(1 + d / 54, 0, 1), my = py + 22, mh = 110;
-          const rmsI = db(st.rms), rmsO = db(csat(st.rms, k));
+          const rmsI = lv ? 0 : db(st.rms), rmsO = lv ? 0 : db(csat(st.rms, k));
           const bar = (x, rmsDb, pk, hold, lbal) => {
             meterV(c, th, x, my, 10, mh, f(rmsDb + lbal));
             c.fillStyle = th.cyan; c.fillRect(x, my + mh * (1 - f(pk + lbal)), 10, 2);
             c.fillStyle = th.orange; c.fillRect(x, my + mh * (1 - f(hold + lbal)), 10, 1);
           };
           const bi = 20 * Math.log10(1 + st.bal) * 1;
+          if (lv) {
+            bar(px + 12, st.rI2[0], st.pkI2[0], st.hI2[0], 0); bar(px + 24, st.rI2[1], st.pkI2[1], st.hI2[1], 0);
+            bar(px + 76, st.rO2[0], st.pkO2[0], st.hO2[0], 0); bar(px + 88, st.rO2[1], st.pkO2[1], st.hO2[1], 0);
+          } else {
           bar(px + 12, rmsI, st.inL, st.hI, bi); bar(px + 24, rmsI, st.inL, st.hI, -bi);
           bar(px + 76, rmsO, st.pkO, st.hO, bi); bar(px + 88, rmsO, st.pkO, st.hO, -bi);
+          }
+          hint(px + 8, my, 38, mh, "Input Meters", "Level of the left and right channels going in. The bar is the average level (RMS). Scale from 0 dB at the top to -48 dB.");
+          hint(px + 72, my, 38, mh, "Output Meters", "Level of the left and right channels coming out. The bar is the average level (RMS). Scale from 0 dB at the top to -48 dB.");
+          const hIn = lv ? Math.max(st.hI2[0], st.hI2[1]) : st.hI, hOut = lv ? Math.max(st.hO2[0], st.hO2[1]) : st.hO;
           [0, -6, -12, -24, -48].forEach(d => {
             const yy = my + mh * (1 - f(d));
             txt(c, px + 56, yy + 3, String(d), { color: th.dispText, size: 8.5 });
             c.fillStyle = th.scale; c.fillRect(px + 38, yy, 4, 1); c.fillRect(px + 70, yy, 4, 1);
           });
           txt(c, px + 23, py + 11, "In", { color: th.dispText }); txt(c, px + 87, py + 11, "Out", { color: th.dispText });
-          c.fillStyle = st.hO > -1 ? th.orange : th.meterBg; c.fillRect(px + 76, py + 14, 22, 3);
-          txt(c, px + 23, py + ph - 6, st.hI.toFixed(1), { color: th.cyan, size: 9 });
-          txt(c, px + 87, py + ph - 6, st.hO.toFixed(1), { color: th.cyan, size: 9 });
+          c.fillStyle = hOut > -1 ? th.orange : th.meterBg; c.fillRect(px + 76, py + 14, 22, 3);
+          hint(px + 76, py + 13, 22, 5, "Clip Lamp", "Lights up orange when the output has reached 0 dB, where clipping starts.");
+          legend(c, th, px + 12, py + 141, [
+            [th.cyan, "Peak", "Cyan tick on each meter: the highest level in the last moments."],
+            [th.orange, "Hold", "Orange line on each meter: the highest level held for about a second."]]);
+          hint(px + 8, py + ph - 16, 36, 14, "Input Peak Hold", "Highest input level held, in dB.");
+          hint(px + 72, py + ph - 16, 36, 14, "Output Peak Hold", "Highest output level held, in dB. Near 0 means little headroom left.");
+          hint(px + 40, my, 30, mh, "Level Scale", "Level in dB. 0 is the top; lower levels are further down.");
+          txt(c, px + 23, py + ph - 6, Math.max(-120, hIn).toFixed(1), { color: th.cyan, size: 9 });
+          txt(c, px + 87, py + ph - 6, Math.max(-120, hOut).toFixed(1), { color: th.cyan, size: 9 });
           // level history
           const hx = px + 112, hw = pw - 120, hy = py + 22, hh = 70;
           txt(c, hx, py + 11, "Level history", { color: th.scale, size: 8.5, align: "left" });
+          legend(c, th, hx + 72, py + 11, [
+            [greyFill(), "In", "Grey area: input level over time."],
+            [th.cyan, "Out", "Cyan line: output level over time."]]);
+          hint(hx, hy, hw, hh, "Level History", "Level over time, newest at the right. Compare the grey input with the cyan output to see what the console does. Scale 0 to -48 dB.");
           rr(c, hx, hy, hw, hh, 2, th.meterBg);
           c.save(); c.beginPath(); c.rect(hx, hy, hw, hh); c.clip();
           const Y = v => hy + hh * (1 - clamp(1 + v / 48, 0, 1)), n = Math.min(st.hist.length, hw);
@@ -188,23 +312,36 @@
           for (let i = 0; i < n; i++) c.lineTo(hx + hw - i, Y(db(st.hist[st.hist.length - 1 - i].a)));
           c.lineTo(hx + hw - n, hy + hh); c.fill();
           c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
-          for (let i = 0; i < n; i++) { const yy = Y(db(csat(st.hist[st.hist.length - 1 - i].a, k))); i ? c.lineTo(hx + hw - i, yy) : c.moveTo(hx + hw - i, yy); }
+          for (let i = 0; i < n; i++) { const he = st.hist[st.hist.length - 1 - i], yy = Y(db(lv ? he.o : csat(he.a, k))); i ? c.lineTo(hx + hw - i, yy) : c.moveTo(hx + hw - i, yy); }
           c.stroke(); c.restore();
-          const rows = [["Gain change", sgn(db(o / a)) + " dB", th.orange], ["Crest in", (st.inL - rmsI).toFixed(1) + " dB", th.cyan],
+          const rows = lv ? [["Gain change", sgn(st.gnow) + " dB", th.orange], ["Crest in", st.cIn.toFixed(1) + " dB", th.cyan],
+            ["Crest out", st.cOut.toFixed(1) + " dB", th.cyan], ["Headroom", Math.min(120, -hOut).toFixed(1) + " dB", th.cyan]]
+            : [["Gain change", sgn(db(o / a)) + " dB", th.orange], ["Crest in", (st.inL - rmsI).toFixed(1) + " dB", th.cyan],
             ["Crest out", (st.pkO - rmsO).toFixed(1) + " dB", th.cyan], ["Headroom", (-st.hO).toFixed(1) + " dB", th.cyan]];
           rows.forEach(([l, v, col], i) => {
+            hint(hx, py + 98 + i * 13, hw, 13, l, ["How much the console raises or lowers the level right now, in dB. Measured as output level minus input level.",
+              "Crest factor of the input: the peak level minus the average level, in dB. A high number means sharp peaks.",
+              "Crest factor of the output: the peak level minus the average level, in dB. Compare with the input.",
+              "Room left below 0 dB at the output, in dB. Measured from the output peak hold."][i]);
             txt(c, hx, py + 107 + i * 13, l, { color: th.dispText, size: 9, align: "left" });
             txt(c, hx + hw, py + 107 + i * 13, v, { color: col, size: 9, align: "right" });
           });
         } },
-      { id: "C", name: "Tone bands", width: 560, step: stepC,
+      { id: "C", name: "Tone bands", short: "Tone", width: 560, step: stepC,
+        live(st, m, dt) {
+          st.lv = 1; lvIO(st, m, dt);
+          if (!lvArr(m.specIn) || !lvArr(m.specOut)) return;
+          const hi = lvHold(st, "hI48", m.specIn, dt, 50), ho = lvHold(st, "hO48", m.specOut, dt, 50), rs = lvResp(st, "rs48", m.specIn, m.specOut);
+          const two = a => { const o = []; for (let b = 0; b < 24; b++) o.push((a[2 * b] + a[2 * b + 1]) / 2); return o; };
+          st.cIn = two(hi); st.cOut = two(ho); st.cD = two(rs);
+        },
         why: "24 frequency bands, input against output, with a small difference strip, like Channel EQ's analyser.",
         bullets: ["Grey bar = input band level, cyan bar = output band level (FFT in 24 bands)",
           "Orange strip: output minus input per band, +/-4 dB, so you see the console's tone change",
           "Driven by the audio: FFT of input and output; Low / Mid / High readouts are measured differences"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 560 - GAIN_W - 4, st);
-          const m = mean(vals), a = st.a; init(st, kOf(vals));
+          const m = mean(vals), a = st.a, lv = !!st.lv; init(st, kOf(vals));
           const R = { x: 376, y: TOP + 4, w: 110, h: 163 };
           if (!ps.length) { txt(c, R.x + R.w / 2, R.y + R.h / 2 - 2, "No controls", { color: th.text, size: 10 }); txt(c, R.x + R.w / 2, R.y + R.h / 2 + 11, "this effect has no dials", { color: th.dim, size: 8.5 }); }
           else knobGrid(c, th, ps, R, 2, vals);
@@ -215,10 +352,11 @@
           const inB = [], dB = [], outB = [];
           for (let b = 0; b < NBd; b++) {
             const i0 = b * 3, v = (sp[i0] + sp[i0 + 1] + sp[i0 + 2]) / 3, fc = fOf(i0 + 1);
+            if (lv) { inB.push(st.cIn ? st.cIn[b] : -120); outB.push(st.cOut ? st.cOut[b] : -120); dB.push(st.cD ? st.cD[b] : 0); continue; }
             const d = cresp(fc, m) + 0.4 * a * noise(b * 5 + Math.floor(st.t * 18));
             inB.push(v); dB.push(d); outB.push(v + d);
           }
-          const avg = (lo, hi) => { let s = 0, n = 0; dB.forEach((d, b) => { const f = fOf(b * 3 + 1); if (f >= lo && f < hi) { s += d; n++; } }); return n ? s / n : 0; };
+          const avg = (lo, hi) => { let s = 0, n = 0; dB.forEach((d, b) => { const f = lv ? 20 * Math.pow(1000, (2 * b + 1) / 48) : fOf(b * 3 + 1); if (f >= lo && f < hi) { s += d; n++; } }); return n ? s / n : 0; };
           [["Low", avg(0, 250), 140], ["Mid", avg(250, 4000), 206], ["High", avg(4000, 1e5), 278]].forEach(([l, v, o]) => {
             txt(c, px + o, py + 13, l, { color: th.dispText, size: 9, align: "left" });
             txt(c, px + o + 24, py + 13, sgn(v), { color: th.orange, size: 9, align: "left" });
@@ -233,6 +371,16 @@
             c.fillStyle = th.cyan; c.fillRect(x + 5.5, Y(outB[b]), 5, gy + gh - Y(outB[b]));
           }
           const dy = py + 117, dh = 30, mid = dy + dh / 2;
+          legend(c, th, gx + 110, py + 113, [
+            [greyFill(), "In", "Grey bars: level of the input in each band."],
+            [th.cyan, "Out", "Cyan bars: level of the output in each band."],
+            [th.orange, "Diff", "Orange strip: output minus input in each band, in dB."]]);
+          hint(gx, gy, gw, gh, "Band Levels", "The sound split into 24 frequency bands, bass at the left, treble at the right. Each pair shows the input (grey) and the output (cyan). Measured with an FFT.");
+          hint(gx, dy, gw, dh, "Difference Strip", "Output minus input for each band, from -4 to +4 dB. Orange up means the console boosts that band; down means it cuts.");
+          hint(gx, py + ph - 12, gw, 10, "Frequency Scale", "Frequency in Hz. Bass is at the left, treble at the right.");
+          hint(px + 138, py + 3, 62, 13, "Low Band Change", "Average change in the bands below 250 Hz, in dB. Measured as output minus input.");
+          hint(px + 204, py + 3, 66, 13, "Mid Band Change", "Average change in the bands from 250 Hz to 4 kHz, in dB. Measured as output minus input.");
+          hint(px + 276, py + 3, 66, 13, "High Band Change", "Average change in the bands above 4 kHz, in dB. Measured as output minus input.");
           txt(c, gx, py + 113, "Output - input (dB)", { color: th.scale, size: 8.5, align: "left" });
           txt(c, gx + gw, py + 113, "+/-4", { color: th.scale, size: 8.5, align: "right" });
           c.fillStyle = th.meterBg; c.fillRect(gx, dy, gw, dh);

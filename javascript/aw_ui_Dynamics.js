@@ -5,6 +5,12 @@
 
 const S = { themes: null, reg: [], byCat: {}, decisions: {}, theme: "dark", zoom: 2, mocks: [] };
 
+// Hover hints (Live's Info View). Coordinates are canvas units (header included). S.offX is
+// the x offset of the view being drawn when several views share one device.
+S.hints = [];
+S.offX = 0;
+function hint(x, y, w, h, title, text) { S.hints.push({ x: x + S.offX, y, w, h, title, text }); }
+
 const FONT = '"Ableton Sans Small", -apple-system, sans-serif';
 const DEVICE_H = 169;   // Live's device body height
 const HEAD_H = 18;      // device title bar
@@ -57,6 +63,7 @@ function shortName(n) { return n.length > 9 ? n.slice(0, 8) + "." : n; }
 // Live-style dial: label above, 270° arc, needle, value below. Cell is w x 50.
 function knob(c, th, x, y, w, p, v, big = false) {
   const r = big ? 15 : 11, cx = x + w / 2, cy = y + (big ? 30 : 25);
+  hint(x, y, w, big ? 58 : 50, p.name, p.info || `A control of ${S.effName || "this effect"}. ${S.effWhat || ""}`.trim());
   txt(c, cx, y + 9, shortName(p.name), { color: th.text });
   const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, av = a0 + (a1 - a0) * v;
   c.lineCap = "butt";
@@ -69,11 +76,13 @@ function knob(c, th, x, y, w, p, v, big = false) {
 }
 function menu(c, th, x, y, w, label) {
   label = S.effName || label;   // always show the effect being previewed
+  hint(x, y, w, 15, "Effect", `Chooses which Airwindows effect this device runs. Now: ${label}. ${S.effWhat || ""}`.trim());
   rr(c, x + 0.5, y + 0.5, w, 14, 1, th.ctrlBg, th.frame);
   txt(c, x + 4, y + 11, label, { color: th.text, align: "left" });
   c.fillStyle = th.text; c.beginPath(); c.moveTo(x + w - 10, y + 5); c.lineTo(x + w - 3, y + 5); c.lineTo(x + w - 6.5, y + 10); c.fill();
 }
 function arrows(c, th, x, y) {
+  hint(x, y, 30, 15, "Previous / Next Effect", "Steps to the previous or next effect in the menu.");
   for (const [i, d] of [[0, -1], [1, 1]]) {
     const bx = x + i * 15;
     rr(c, bx + 0.5, y + 0.5, 14, 14, 1, th.ctrlBg, th.frame);
@@ -128,6 +137,7 @@ function stepDynamics(st, dt) {
   st.gr += (target - st.gr) * (target > st.gr ? 0.6 : 0.08);          // attack / release
   st.inL = Math.max(inDb, st.inL - 24 * dt); st.outL = Math.max(inDb - st.gr + 3, st.outL - 24 * dt);
   st.hist.push({ inA: d.env, out: st.outL, gr: st.gr });
+  st.hist.simThr = true;
   if (st.hist.length > 600) st.hist.shift();
 }
 function stepReverb(st, dt) {
@@ -202,6 +212,8 @@ function grNeedle(c, th, x, y, w, h, gr) {
   c.restore();
   txt(c, x + w - 6, y + 12, "GR dB", { color: th.scale, size: 9, align: "right" });
 }
+// the simulated compressor has a known threshold (-14 dB); real effects do not report one
+function st_thr(hist) { return hist.simThr ? -14 : null; }
 function activity(c, th, x, y, w, h, hist) {
   rr(c, x, y, w, h, 3, th.display);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
@@ -212,7 +224,7 @@ function activity(c, th, x, y, w, h, hist) {
   for (let i = 0; i < n; i++) { const e = hist[hist.length - 1 - i]; c.lineTo(x + w - i, toY(db(e.inA * 0.9 + 0.02))); }
   c.lineTo(x + w - n, base); c.fill();
   // threshold line
-  c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, toY(-14)); c.lineTo(x + w, toY(-14)); c.stroke();
+  if (st_thr(hist) !== null) { c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, toY(-14)); c.lineTo(x + w, toY(-14)); c.stroke(); }
   // gain reduction trace (orange, from the top)
   c.strokeStyle = th.orange; c.lineWidth = 1.5; c.beginPath();
   for (let i = 0; i < n; i++) { const e = hist[hist.length - 1 - i]; const yy = y + 6 + e.gr * 3; i ? c.lineTo(x + w - i, yy) : c.moveTo(x + w - i, yy); }
@@ -283,6 +295,63 @@ function decayMap(c, th, x, y, w, h, st) {
   const ticks = st.envHist ? ["-3 s", "-2 s", "-1 s", "now"] : ["0", "1 s", "2 s", "3 s"];
   ticks.forEach((s, i) => txt(c, x + 6 + (w - 12) * i / 3, y + h - 3, s, { color: th.scale, size: 8.5, align: i ? (i === 3 ? "right" : "center") : "left" }));
 }
+// A control shown as a draggable number (like Hybrid Reverb's display row). In the device an
+// invisible live.dial lies over it, so it drags like a dial and stays automatable.
+function readout(c, th, x, y, w, p, v) {
+  hint(x, y - 11, w, 28, p.name, p.info || `A control of ${S.effName || "this effect"}. Drag up or down to change it.`);
+  txt(c, x + w / 2, y, p.name, { color: th.dispText, size: 10 });
+  txt(c, x + w / 2, y + 15, fmt(p.display), { color: th.cyan, size: 11 });
+}
+
+// Colour key in one style for every device: small swatches with labels, left to right.
+// items: [[colour, label, explanation], ...]. Each item also gets a hover hint. Returns end x.
+function legend(c, th, x, y, items, o = {}) {
+  const size = o.size || 8.5;
+  c.font = `400 ${size}px ${FONT}`;
+  let cx = x;
+  for (const [col, label, info] of items) {
+    const tw = Math.ceil(c.measureText(label).width);
+    c.fillStyle = col;
+    if (o.line) c.fillRect(cx, y - 4, 8, 2); else c.fillRect(cx, y - 6, 6, 6);
+    txt(c, cx + (o.line ? 11 : 9), y, label, { color: o.color || th.dispText, align: "left", size });
+    if (info) hint(cx - 1, y - 9, tw + 12, 12, label, info);
+    cx += tw + (o.line ? 11 : 9) + (o.gap || 8);
+  }
+  return cx;
+}
+
+// Several options of one category in one device, switched by the View selector at the top of
+// the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
+// own state (and history), so switching is instant. Narrower views are centred.
+function composeViews(des, ids) {
+  const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
+  const W = Math.max(...opts.map(o => o.width));
+  const labels = opts.map(o => o.short || o.name.split(/[ (—]/)[0]);
+  const sub = st => (st.sub = st.sub || opts.map(() => newState()));
+  return {
+    id: opts.map(o => o.id).join("+"), name: opts.map(o => o.name).join(" / "), width: W, views: labels,
+    why: "Views: " + opts.map((o, i) => `${labels[i]} — ${o.why}`).join(" "),
+    bullets: ["Click a View button (top of the Input/Output column) to switch the display"].concat(opts.map((o, i) => `${labels[i]}: ${o.bullets[0]}`)),
+    step(st, dt) { sub(st).forEach((s, i) => { s.t = st.t; opts[i].step(s, dt); }); },
+    live(st, m, dt) { sub(st).forEach((s, i) => { s.t = st.t; (opts[i].live || liveGeneric)(s, m, dt); }); },
+    click(x, y, st) {
+      for (const [i, r] of (st.viewRects || []).entries())
+        if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { st.view = i; return; }
+      const v = Math.min(st.view || 0, opts.length - 1);
+      if (opts[v].click) opts[v].click(x - (st.dx || 0), y, sub(st)[v]);
+    },
+    draw(c, th, st, ps, vals) {
+      const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
+      const dx = Math.round((W - o.width) / 2);
+      st.dx = dx;
+      c.save(); c.translate(dx, 0);
+      S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
+      try { o.draw(c, th, sub(st)[v], ps, vals); }
+      finally { st.viewRects = S.viewRects; c.restore(); S.offX = 0; S.gainX = undefined; S.views = null; }
+    },
+  };
+}
+
 // Word-wrapped text block (e.g. the effect description) inside width w, at most maxLines.
 function wrapText(c, x, y, w, text, o = {}) {
   c.font = `400 ${o.size || 9.5}px ${FONT}`;
@@ -300,20 +369,39 @@ function wrapText(c, x, y, w, text, o = {}) {
 // Two dB dials (Input above, Output below) and a stereo In / Out meter pair. Width GAIN_W.
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
+  if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
   const y = HEAD_H + 6, h = DEVICE_H - 12;
   rr(c, x, y, GAIN_W, h, 3, th.panel);
+  let top = y;
+  if (S.views) {                                      // view selector at the top of the column
+    viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
+    top = y + 3 + S.views.labels.length * 15 + 1;
+  }
   const dbTxt = v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB";
-  knob(c, th, x - 2, y + 8, 44, { name: "Input", display: dbTxt(st.inGain || 0) }, 0.5 + (st.inGain || 0) / 72);
-  knob(c, th, x - 2, y + 8 + h / 2, 44, { name: "Output", display: dbTxt(st.outGain || 0) }, 0.5 + (st.outGain || 0) / 72);
+  const room = y + h - top, kh = Math.min(room / 2, 78);
+  knob(c, th, x - 2, top + Math.max(2, (kh - 50) / 2), 44, { name: "Input", display: dbTxt(st.inGain || 0),
+    info: "Input gain in dB, applied before the effect. Drives the effect harder or softer; the left meter pair shows the level after it." }, 0.5 + (st.inGain || 0) / 72);
+  knob(c, th, x - 2, top + kh + Math.max(0, (kh - 50) / 2), 44, { name: "Output", display: dbTxt(st.outGain || 0),
+    info: "Output gain in dB, applied after the effect. The right meter pair shows the level after it." }, 0.5 + (st.outGain || 0) / 72);
   const f = dbv => Math.max(0, 1 + (Number.isFinite(dbv) ? dbv : -60) / 48);
-  const mx = x + 44, mh = h - 8;
-  meterV(c, th, mx, y + 4, 3, mh, f(st.inL)); meterV(c, th, mx + 4, y + 4, 3, mh, f(st.inL) * 0.96);
-  meterV(c, th, mx + 10, y + 4, 3, mh, f(st.outL)); meterV(c, th, mx + 14, y + 4, 3, mh, f(st.outL) * 0.97);
+  const mx = x + 44, mt = top + 1, mh = y + h - 4 - mt;
+  meterV(c, th, mx, mt, 3, mh, f(st.inL)); meterV(c, th, mx + 4, mt, 3, mh, f(st.inL) * 0.96);
+  meterV(c, th, mx + 10, mt, 3, mh, f(st.outL)); meterV(c, th, mx + 14, mt, 3, mh, f(st.outL) * 0.97);
+  hint(mx, mt, 18, mh, "In / Out Meters", "Left pair: input level after the Input gain. Right pair: output level after the Output gain. Scale 0 dB (top) to -48 dB.");
 }
 
-// View switch, like Compressor's display buttons: draws labelled tabs, returns their rects.
+// Vertical view selector (several views in one device). Rects go to S.viewRects for clicks.
+function viewTabsV(c, th, x, y, w, labels, active) {
+  S.viewRects = labels.map((l, i) => {
+    toggle(c, th, x, y + i * 15, w, l, i === active);
+    return { x: x + S.offX, y: y + i * 15, w, h: 14 };
+  });
+  hint(x, y, w, labels.length * 15, "View", `Chooses what the display shows: ${labels.join(", ")}. The controls and the sound do not change.`);
+}
+
 function viewTabs(c, th, x, y, labels, active) {
   let cx = x;
+  hint(x, y, labels.length * 60, 15, "View", `Chooses what the display shows: ${labels.join(", ")}.`);
   return labels.map((l, i) => {
     c.font = `400 9.5px ${FONT}`;
     const w = Math.ceil(c.measureText(l).width) + 12;
@@ -605,7 +693,7 @@ DESIGNS["Dynamics"] = {
     refs: [["GlueL12.png", "Glue Compressor"], ["CompressorL12.png", "Compressor"], ["LimiterL12.png", "Limiter"]],
     lead: "Visual cue: how much the effect is turning the level down (gain reduction), measured live from input vs output.",
     options: [
-      { id: "AB", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics, live: liveGeneric,
+      { id: "AB", short: "Glue+Comp", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics, live: liveGeneric,
         why: "One display with two views, switched by the buttons in its header like Compressor: Glue's gain-reduction needle, or Compressor's activity history. Input and Output gain on the right.",
         bullets: ["Click Needle / Activity in the display header to switch views (a saved device setting)",
                   "Both views are driven by input vs output level (gain reduction), measured by airwin~",
@@ -621,8 +709,17 @@ DESIGNS["Dynamics"] = {
           st.tabs = viewTabs(c, th, dx + 5, dy + 4, ["Needle", "Activity"], st.view || 0);
           txt(c, dx + dw - 8, dy + 15, `GR -${st.gr.toFixed(1)} dB`, { color: th.orange, align: "right" });
           c.fillStyle = th.dline; c.fillRect(dx, dy + 22, dw, 1);
-          if ((st.view || 0) === 0) grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
-          else activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
+          hint(dx + dw - 70, dy + 4, 66, 14, "Gain Reduction", "How much the effect turns the level down right now, in dB. Measured from the input and output levels.");
+          if ((st.view || 0) === 0) {
+            grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
+            hint(dx, dy + 23, dw, dh - 23, "Gain Reduction Needle", "Shows how many dB the effect takes away, like the meter of Glue Compressor. 0 = no change. Measured from the input and output levels.");
+            legend(c, th, dx + 6, dy + dh - 5, [[th.cyan, "Gain reduction", "Needle: dB the effect takes away now."]], { line: true });
+          } else {
+            activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
+            hint(dx, dy + 23, dw, dh - 23, "Activity", "The last seconds, newest on the right: the input level in grey and the gain reduction in orange, like the display of Compressor.");
+            legend(c, th, dx + 6, dy + dh - 5, [[S.theme === "light" ? "#5e5e5e" : "#5a5a5a", "Input", "Input level over time."],
+                                               [th.orange, "Gain reduction", "dB taken away over time; lower = more reduction."]]);
+          }
           const first = ps.slice(0, 4);
           rr(c, dx, dy + dh + 4, dw, DEVICE_H - dh - 16, 3, th.panel);
           first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, dy + dh + 6, 74, p, vals[p._i], true));
@@ -676,7 +773,7 @@ DESIGNS["Dynamics"] = {
 
 // runtime_max.js : runs one approved design inside a v8ui of a Max for Live device.
 // tools/build_ui.py appends this after lib.js, mgcanvas.js and designs/<Category>.js and
-// replaces "Dynamics", "AB" and {"dark": {"ControlForeground": "#b5b5b5", "TextDisabled": "#757575", "ControlDisabled": "#757575", "MeterBackground": "#181818", "SurfaceHighlight": "#464646", "SurfaceArea": "#242424", "Desktop": "#2a2a2a", "ViewCheckControlEnabledOn": "#ffad56", "ScrollbarInnerHandle": "#696969", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#696969", "ScrollbarLCDTrack": "#363636", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#3e3e3e", "PreferencesTab": "#363636", "SelectionFrame": "#757575", "ControlBackground": "#1e1e1e", "ControlFillHandle": "#5d5d5d", "ChosenDefault": "#ffad56", "ChosenRecord": "#ff5559", "ChosenPreListen": "#3c6ab6", "ImplicitArm": "#ff000064", "RangeDefault": "#03c3d5", "RangeDisabled": "#757575", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#007383", "RangeEditField2": "#a03c4c", "BipolReset": "#03c3d5", "ChosenAlternative": "#03c3d5", "ChosenAlert": "#e76942", "ChosenPlay": "#00d38d", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#2a2a2a", "SceneContrast": "#2a2a2a", "SelectionBackground": "#b0ddeb", "StandbySelectionBackground": "#637e86", "SelectionForeground": "#070707", "StandbySelectionForeground": "#070707", "SelectionBackgroundContrast": "#7a959e", "SurfaceBackground": "#363636", "TakeLaneTrackHighlighted": "#3e3e3e", "TakeLaneTrackNotHighlighted": "#303030", "AutomationColor": "#ff4d47", "AutomationGrid": "#0b0b0b", "LoopColor": "#919191", "OffGridLoopColor": "#8888884f", "ArrangementRulerMarkings": "#919191", "DetailViewRulerMarkings": "#919191", "ShadowDark": "#24242454", "ShadowLight": "#2b2b2bcc", "DisplayBackground": "#181818", "AbletonColor": "#00ff00", "WaveformColor": "#171717ef", "DimmedWaveformColor": "#696969df", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#e76942", "ControlOnForeground": "#070707", "ControlOffForeground": "#b5b5b5", "ControlOnDisabledForeground": "#242424", "ControlOffDisabledForeground": "#696969", "ControlOnAlternativeForeground": "#070707", "ControlTextBack": "#242424", "ControlContrastFrame": "#111111", "ControlSelectionFrame": "#919191", "ControlContrastTransport": "#363636", "ViewControlOn": "#ffad56", "ViewControlOff": "#464646", "Progress": "#ffad56", "ProgressText": "#636363", "TransportProgress": "#ffad56", "ClipSlotButton": "#1e1e1e", "BrowserBar": "#363636", "BrowserBarOverlayHintTextColor": "#5d5d5d", "BrowserDisabledItem": "#757575", "BrowserSampleWaveform": "#868686", "AutomationDisabled": "#646464", "AutomationMouseOver": "#ff9085", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#181818", "RetroDisplayBackgroundLine": "#3e3e3e", "RetroDisplayForeground": "#ffad56", "RetroDisplayForeground2": "#03c3d5", "RetroDisplayForegroundDisabled": "#868686", "RetroDisplayGreen": "#ffad56", "RetroDisplayRed": "#03c3d5", "RetroDisplayHandle1": "#ffad56", "RetroDisplayHandle2": "#ff697f", "RetroDisplayScaleText": "#868686", "RetroDisplayTitle": "#b5b5b5", "ThresholdLineColor": "#03c3d5", "GainReductionLineColor": "#ffad56", "InputCurveColor": "#535353", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#8686864c", "OutputCurveOutlineColor": "#bfbfbf", "SpectrumDefaultColor": "#535353", "SpectrumAlternativeColor": "#3c6ab6", "SpectrumGridLines": "#b6b6b63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#464646", "DrumRackScroller2": "#696969", "FilledDrumRackPad": "#b5b5b5", "SurfaceAreaFocus": "#242424", "FreezeColor": "#4391e6", "GridLabel": "#b5b5b57f", "GridLineBase": "#06060654", "ArrangerGridTiles": "#0a0a0a19", "DetailGridTiles": "#0a0a0a19", "GridGuideline": "#b5b5b5", "OffGridGuideline": "#b5b5b54f", "TreeColumnHeadBackground": "#464646", "TreeColumnHeadForeground": "#b5b5b5", "TreeColumnHeadSelected": "#464646", "TreeColumnHeadFocus": "#464646", "TreeColumnHeadControl": "#757575", "TreeRowCategoryForeground": "#757575", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#242424", "SearchIndication": "#ecca6d", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#757575", "ViewCheckControlDisabledOn": "#868686", "ViewCheckControlDisabledOff": "#5d5d5d", "BackgroundClip": "#5d5d5d", "BackgroundClipFrame": "#363636", "WarperTimeBarRulerBackground": "#363636", "WarperTimeBarMarkerBackground": "#303030", "BipolarPotiTriangle": "#111111", "Poti": "#111111", "DeactivatedPoti": "#2a2a2a", "PotiNeedle": "#181818", "DeactivatedPotiNeedle": "#2a2a2a", "PianoBlackKey": "#464646", "PianoWhiteKey": "#868686", "PianoKeySeparator": "#464646", "TransportOffBackground": "#363636", "TransportOffDisabledForeground": "#696969", "TransportOffForeground": "#b5b5b5", "TransportSelectionBackground": "#5d5d5d", "Modulation": "#009aac", "ModulationDisabled": "#79bdc7a9", "ModulationMouseOver": "#8cffff", "AutomationTransformToolFrame": "#292929bf", "AutomationTransformToolFrameActive": "#0b0b0b", "AutomationTransformToolHandle": "#292929bf", "AutomationTransformToolHandleActive": "#0b0b0b", "MutedAuditionClip": "#636363", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#3e3e3e", "DeactivatedClipHeader": "#696969df", "DeactivatedClipHeaderForeground": "#2a2a2a", "ScaleAwareness": "#b595fc", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#757575", "MidiEditorBlackKeyBackground": "#07070726", "MidiEditorBackgroundWhiteKeySeparator": "#0a0a0a19", "RangeEditField3": "#7b5732", "ScrollbarInnerHandleHover": "#757575", "ScrollbarInnerTrackHover": "#242424", "ScrollbarLCDHandleHover": "#757575", "ScrollbarLCDTrackHover": "#464646", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#5d5d5d", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}, "light": {"ControlForeground": "#121212", "TextDisabled": "#6e6e6e", "ControlDisabled": "#f1f1f1", "MeterBackground": "#242424", "SurfaceHighlight": "#bcbcbc", "SurfaceArea": "#6e6e6e", "Desktop": "#818181", "ViewCheckControlEnabledOn": "#ffb901", "ScrollbarInnerHandle": "#5b5b5b", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#4f4f4f", "ScrollbarLCDTrack": "#3d3d3d", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#c6c6c6", "PreferencesTab": "#a5a5a5", "SelectionFrame": "#3d3d3d", "ControlBackground": "#cfcfcf", "ControlFillHandle": "#cfcfcf", "ChosenDefault": "#ffb901", "ChosenRecord": "#ff595f", "ChosenPreListen": "#1a7df1", "ImplicitArm": "#ff000064", "RangeDefault": "#00eeff", "RangeDisabled": "#f1f1f1", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#00cadb", "RangeEditField2": "#f87680", "BipolReset": "#00eeff", "ChosenAlternative": "#00eeff", "ChosenAlert": "#ff7d43", "ChosenPlay": "#00faa3", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#000000", "SceneContrast": "#636363", "SelectionBackground": "#cdf8ff", "StandbySelectionBackground": "#abc6cb", "SelectionForeground": "#121212", "StandbySelectionForeground": "#121212", "SelectionBackgroundContrast": "#afcfd4", "SurfaceBackground": "#a5a5a5", "TakeLaneTrackHighlighted": "#bcbcbc", "TakeLaneTrackNotHighlighted": "#9c9c9c", "AutomationColor": "#ea3c3c", "AutomationGrid": "#121212", "LoopColor": "#3d3d3d", "OffGridLoopColor": "#24293364", "ArrangementRulerMarkings": "#3d3d3d", "DetailViewRulerMarkings": "#3d3d3d", "ShadowDark": "#12121254", "ShadowLight": "#8a8a8acc", "DisplayBackground": "#5b5b5b", "AbletonColor": "#00ff00", "WaveformColor": "#222222ef", "DimmedWaveformColor": "#5a5a5adf", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#ff7d43", "ControlOnForeground": "#121212", "ControlOffForeground": "#121212", "ControlOnDisabledForeground": "#121212", "ControlOffDisabledForeground": "#6e6e6e", "ControlOnAlternativeForeground": "#121212", "ControlTextBack": "#dfdfdf", "ControlContrastFrame": "#4f4f4f", "ControlSelectionFrame": "#4f4f4f", "ControlContrastTransport": "#a5a5a5", "ViewControlOn": "#ffb901", "ViewControlOff": "#a5a5a5", "Progress": "#ffb901", "ProgressText": "#636363", "TransportProgress": "#ffb901", "ClipSlotButton": "#5b5b5b", "BrowserBar": "#a5a5a5", "BrowserBarOverlayHintTextColor": "#4f4f4f", "BrowserDisabledItem": "#4f4f4f", "BrowserSampleWaveform": "#6e6e6e", "AutomationDisabled": "#595959", "AutomationMouseOver": "#891a1c", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#242424", "RetroDisplayBackgroundLine": "#5b5b5b", "RetroDisplayForeground": "#ffb901", "RetroDisplayForeground2": "#00eeff", "RetroDisplayForegroundDisabled": "#a5a5a5", "RetroDisplayGreen": "#ffb901", "RetroDisplayRed": "#00eeff", "RetroDisplayHandle1": "#ffb901", "RetroDisplayHandle2": "#f87680", "RetroDisplayScaleText": "#cfcfcf7f", "RetroDisplayTitle": "#cfcfcf", "ThresholdLineColor": "#00eeff", "GainReductionLineColor": "#ffb901", "InputCurveColor": "#bcbcbc54", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#cecece3f", "OutputCurveOutlineColor": "#cfcfcf", "SpectrumDefaultColor": "#bcbcbc54", "SpectrumAlternativeColor": "#1a7df1", "SpectrumGridLines": "#a6a6a63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#898989", "DrumRackScroller2": "#6e6e6e", "FilledDrumRackPad": "#cfcfcf", "SurfaceAreaFocus": "#6e6e6e", "FreezeColor": "#4391e6", "GridLabel": "#3c3c3c7f", "GridLineBase": "#1010103f", "ArrangerGridTiles": "#0f0f0f11", "DetailGridTiles": "#0f0f0f11", "GridGuideline": "#121212", "OffGridGuideline": "#1313134f", "TreeColumnHeadBackground": "#bcbcbc", "TreeColumnHeadForeground": "#3d3d3d", "TreeColumnHeadSelected": "#cfcfcf", "TreeColumnHeadFocus": "#bcbcbc", "TreeColumnHeadControl": "#6e6e6e", "TreeRowCategoryForeground": "#4f4f4f", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#bcbcbc", "SearchIndication": "#ffde72", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#242424", "ViewCheckControlDisabledOn": "#dfdfdf", "ViewCheckControlDisabledOff": "#6e6e6e", "BackgroundClip": "#898989", "BackgroundClipFrame": "#6e6e6e", "WarperTimeBarRulerBackground": "#878787", "WarperTimeBarMarkerBackground": "#929292", "BipolarPotiTriangle": "#242424", "Poti": "#242424", "DeactivatedPoti": "#6e6e6e", "PotiNeedle": "#242424", "DeactivatedPotiNeedle": "#6e6e6e", "PianoBlackKey": "#5a5a5a", "PianoWhiteKey": "#f1f1f1", "PianoKeySeparator": "#a5a5a5", "TransportOffBackground": "#a5a5a5", "TransportOffDisabledForeground": "#6e6e6e", "TransportOffForeground": "#121212", "TransportSelectionBackground": "#cfcfcf", "Modulation": "#008cad", "ModulationDisabled": "#87a9b5", "ModulationMouseOver": "#005f79", "AutomationTransformToolFrame": "#242424bf", "AutomationTransformToolFrameActive": "#242424", "AutomationTransformToolHandle": "#242424bf", "AutomationTransformToolHandleActive": "#242424", "MutedAuditionClip": "#9c9c9c", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#bcbcbc", "DeactivatedClipHeader": "#5b5b5bdf", "DeactivatedClipHeaderForeground": "#bcbcbc", "ScaleAwareness": "#be98ff", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#3d3d3d", "MidiEditorBlackKeyBackground": "#22222226", "MidiEditorBackgroundWhiteKeySeparator": "#3d3d3d19", "RangeEditField3": "#f1ac00", "ScrollbarInnerHandleHover": "#4f4f4f", "ScrollbarInnerTrackHover": "#818181", "ScrollbarLCDHandleHover": "#5b5b5b", "ScrollbarLCDTrackHover": "#4f4f4f", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#cfcfcf", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}}.
+// replaces "Dynamics", __OPTION__ and {"dark": {"ControlForeground": "#b5b5b5", "TextDisabled": "#757575", "ControlDisabled": "#757575", "MeterBackground": "#181818", "SurfaceHighlight": "#464646", "SurfaceArea": "#242424", "Desktop": "#2a2a2a", "ViewCheckControlEnabledOn": "#ffad56", "ScrollbarInnerHandle": "#696969", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#696969", "ScrollbarLCDTrack": "#363636", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#3e3e3e", "PreferencesTab": "#363636", "SelectionFrame": "#757575", "ControlBackground": "#1e1e1e", "ControlFillHandle": "#5d5d5d", "ChosenDefault": "#ffad56", "ChosenRecord": "#ff5559", "ChosenPreListen": "#3c6ab6", "ImplicitArm": "#ff000064", "RangeDefault": "#03c3d5", "RangeDisabled": "#757575", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#007383", "RangeEditField2": "#a03c4c", "BipolReset": "#03c3d5", "ChosenAlternative": "#03c3d5", "ChosenAlert": "#e76942", "ChosenPlay": "#00d38d", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#2a2a2a", "SceneContrast": "#2a2a2a", "SelectionBackground": "#b0ddeb", "StandbySelectionBackground": "#637e86", "SelectionForeground": "#070707", "StandbySelectionForeground": "#070707", "SelectionBackgroundContrast": "#7a959e", "SurfaceBackground": "#363636", "TakeLaneTrackHighlighted": "#3e3e3e", "TakeLaneTrackNotHighlighted": "#303030", "AutomationColor": "#ff4d47", "AutomationGrid": "#0b0b0b", "LoopColor": "#919191", "OffGridLoopColor": "#8888884f", "ArrangementRulerMarkings": "#919191", "DetailViewRulerMarkings": "#919191", "ShadowDark": "#24242454", "ShadowLight": "#2b2b2bcc", "DisplayBackground": "#181818", "AbletonColor": "#00ff00", "WaveformColor": "#171717ef", "DimmedWaveformColor": "#696969df", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#e76942", "ControlOnForeground": "#070707", "ControlOffForeground": "#b5b5b5", "ControlOnDisabledForeground": "#242424", "ControlOffDisabledForeground": "#696969", "ControlOnAlternativeForeground": "#070707", "ControlTextBack": "#242424", "ControlContrastFrame": "#111111", "ControlSelectionFrame": "#919191", "ControlContrastTransport": "#363636", "ViewControlOn": "#ffad56", "ViewControlOff": "#464646", "Progress": "#ffad56", "ProgressText": "#636363", "TransportProgress": "#ffad56", "ClipSlotButton": "#1e1e1e", "BrowserBar": "#363636", "BrowserBarOverlayHintTextColor": "#5d5d5d", "BrowserDisabledItem": "#757575", "BrowserSampleWaveform": "#868686", "AutomationDisabled": "#646464", "AutomationMouseOver": "#ff9085", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#181818", "RetroDisplayBackgroundLine": "#3e3e3e", "RetroDisplayForeground": "#ffad56", "RetroDisplayForeground2": "#03c3d5", "RetroDisplayForegroundDisabled": "#868686", "RetroDisplayGreen": "#ffad56", "RetroDisplayRed": "#03c3d5", "RetroDisplayHandle1": "#ffad56", "RetroDisplayHandle2": "#ff697f", "RetroDisplayScaleText": "#868686", "RetroDisplayTitle": "#b5b5b5", "ThresholdLineColor": "#03c3d5", "GainReductionLineColor": "#ffad56", "InputCurveColor": "#535353", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#8686864c", "OutputCurveOutlineColor": "#bfbfbf", "SpectrumDefaultColor": "#535353", "SpectrumAlternativeColor": "#3c6ab6", "SpectrumGridLines": "#b6b6b63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#464646", "DrumRackScroller2": "#696969", "FilledDrumRackPad": "#b5b5b5", "SurfaceAreaFocus": "#242424", "FreezeColor": "#4391e6", "GridLabel": "#b5b5b57f", "GridLineBase": "#06060654", "ArrangerGridTiles": "#0a0a0a19", "DetailGridTiles": "#0a0a0a19", "GridGuideline": "#b5b5b5", "OffGridGuideline": "#b5b5b54f", "TreeColumnHeadBackground": "#464646", "TreeColumnHeadForeground": "#b5b5b5", "TreeColumnHeadSelected": "#464646", "TreeColumnHeadFocus": "#464646", "TreeColumnHeadControl": "#757575", "TreeRowCategoryForeground": "#757575", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#242424", "SearchIndication": "#ecca6d", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#757575", "ViewCheckControlDisabledOn": "#868686", "ViewCheckControlDisabledOff": "#5d5d5d", "BackgroundClip": "#5d5d5d", "BackgroundClipFrame": "#363636", "WarperTimeBarRulerBackground": "#363636", "WarperTimeBarMarkerBackground": "#303030", "BipolarPotiTriangle": "#111111", "Poti": "#111111", "DeactivatedPoti": "#2a2a2a", "PotiNeedle": "#181818", "DeactivatedPotiNeedle": "#2a2a2a", "PianoBlackKey": "#464646", "PianoWhiteKey": "#868686", "PianoKeySeparator": "#464646", "TransportOffBackground": "#363636", "TransportOffDisabledForeground": "#696969", "TransportOffForeground": "#b5b5b5", "TransportSelectionBackground": "#5d5d5d", "Modulation": "#009aac", "ModulationDisabled": "#79bdc7a9", "ModulationMouseOver": "#8cffff", "AutomationTransformToolFrame": "#292929bf", "AutomationTransformToolFrameActive": "#0b0b0b", "AutomationTransformToolHandle": "#292929bf", "AutomationTransformToolHandleActive": "#0b0b0b", "MutedAuditionClip": "#636363", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#3e3e3e", "DeactivatedClipHeader": "#696969df", "DeactivatedClipHeaderForeground": "#2a2a2a", "ScaleAwareness": "#b595fc", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#757575", "MidiEditorBlackKeyBackground": "#07070726", "MidiEditorBackgroundWhiteKeySeparator": "#0a0a0a19", "RangeEditField3": "#7b5732", "ScrollbarInnerHandleHover": "#757575", "ScrollbarInnerTrackHover": "#242424", "ScrollbarLCDHandleHover": "#757575", "ScrollbarLCDTrackHover": "#464646", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#5d5d5d", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}, "light": {"ControlForeground": "#121212", "TextDisabled": "#6e6e6e", "ControlDisabled": "#f1f1f1", "MeterBackground": "#242424", "SurfaceHighlight": "#bcbcbc", "SurfaceArea": "#6e6e6e", "Desktop": "#818181", "ViewCheckControlEnabledOn": "#ffb901", "ScrollbarInnerHandle": "#5b5b5b", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#4f4f4f", "ScrollbarLCDTrack": "#3d3d3d", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#c6c6c6", "PreferencesTab": "#a5a5a5", "SelectionFrame": "#3d3d3d", "ControlBackground": "#cfcfcf", "ControlFillHandle": "#cfcfcf", "ChosenDefault": "#ffb901", "ChosenRecord": "#ff595f", "ChosenPreListen": "#1a7df1", "ImplicitArm": "#ff000064", "RangeDefault": "#00eeff", "RangeDisabled": "#f1f1f1", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#00cadb", "RangeEditField2": "#f87680", "BipolReset": "#00eeff", "ChosenAlternative": "#00eeff", "ChosenAlert": "#ff7d43", "ChosenPlay": "#00faa3", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#000000", "SceneContrast": "#636363", "SelectionBackground": "#cdf8ff", "StandbySelectionBackground": "#abc6cb", "SelectionForeground": "#121212", "StandbySelectionForeground": "#121212", "SelectionBackgroundContrast": "#afcfd4", "SurfaceBackground": "#a5a5a5", "TakeLaneTrackHighlighted": "#bcbcbc", "TakeLaneTrackNotHighlighted": "#9c9c9c", "AutomationColor": "#ea3c3c", "AutomationGrid": "#121212", "LoopColor": "#3d3d3d", "OffGridLoopColor": "#24293364", "ArrangementRulerMarkings": "#3d3d3d", "DetailViewRulerMarkings": "#3d3d3d", "ShadowDark": "#12121254", "ShadowLight": "#8a8a8acc", "DisplayBackground": "#5b5b5b", "AbletonColor": "#00ff00", "WaveformColor": "#222222ef", "DimmedWaveformColor": "#5a5a5adf", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#ff7d43", "ControlOnForeground": "#121212", "ControlOffForeground": "#121212", "ControlOnDisabledForeground": "#121212", "ControlOffDisabledForeground": "#6e6e6e", "ControlOnAlternativeForeground": "#121212", "ControlTextBack": "#dfdfdf", "ControlContrastFrame": "#4f4f4f", "ControlSelectionFrame": "#4f4f4f", "ControlContrastTransport": "#a5a5a5", "ViewControlOn": "#ffb901", "ViewControlOff": "#a5a5a5", "Progress": "#ffb901", "ProgressText": "#636363", "TransportProgress": "#ffb901", "ClipSlotButton": "#5b5b5b", "BrowserBar": "#a5a5a5", "BrowserBarOverlayHintTextColor": "#4f4f4f", "BrowserDisabledItem": "#4f4f4f", "BrowserSampleWaveform": "#6e6e6e", "AutomationDisabled": "#595959", "AutomationMouseOver": "#891a1c", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#242424", "RetroDisplayBackgroundLine": "#5b5b5b", "RetroDisplayForeground": "#ffb901", "RetroDisplayForeground2": "#00eeff", "RetroDisplayForegroundDisabled": "#a5a5a5", "RetroDisplayGreen": "#ffb901", "RetroDisplayRed": "#00eeff", "RetroDisplayHandle1": "#ffb901", "RetroDisplayHandle2": "#f87680", "RetroDisplayScaleText": "#cfcfcf7f", "RetroDisplayTitle": "#cfcfcf", "ThresholdLineColor": "#00eeff", "GainReductionLineColor": "#ffb901", "InputCurveColor": "#bcbcbc54", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#cecece3f", "OutputCurveOutlineColor": "#cfcfcf", "SpectrumDefaultColor": "#bcbcbc54", "SpectrumAlternativeColor": "#1a7df1", "SpectrumGridLines": "#a6a6a63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#898989", "DrumRackScroller2": "#6e6e6e", "FilledDrumRackPad": "#cfcfcf", "SurfaceAreaFocus": "#6e6e6e", "FreezeColor": "#4391e6", "GridLabel": "#3c3c3c7f", "GridLineBase": "#1010103f", "ArrangerGridTiles": "#0f0f0f11", "DetailGridTiles": "#0f0f0f11", "GridGuideline": "#121212", "OffGridGuideline": "#1313134f", "TreeColumnHeadBackground": "#bcbcbc", "TreeColumnHeadForeground": "#3d3d3d", "TreeColumnHeadSelected": "#cfcfcf", "TreeColumnHeadFocus": "#bcbcbc", "TreeColumnHeadControl": "#6e6e6e", "TreeRowCategoryForeground": "#4f4f4f", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#bcbcbc", "SearchIndication": "#ffde72", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#242424", "ViewCheckControlDisabledOn": "#dfdfdf", "ViewCheckControlDisabledOff": "#6e6e6e", "BackgroundClip": "#898989", "BackgroundClipFrame": "#6e6e6e", "WarperTimeBarRulerBackground": "#878787", "WarperTimeBarMarkerBackground": "#929292", "BipolarPotiTriangle": "#242424", "Poti": "#242424", "DeactivatedPoti": "#6e6e6e", "PotiNeedle": "#242424", "DeactivatedPotiNeedle": "#6e6e6e", "PianoBlackKey": "#5a5a5a", "PianoWhiteKey": "#f1f1f1", "PianoKeySeparator": "#a5a5a5", "TransportOffBackground": "#a5a5a5", "TransportOffDisabledForeground": "#6e6e6e", "TransportOffForeground": "#121212", "TransportSelectionBackground": "#cfcfcf", "Modulation": "#008cad", "ModulationDisabled": "#87a9b5", "ModulationMouseOver": "#005f79", "AutomationTransformToolFrame": "#242424bf", "AutomationTransformToolFrameActive": "#242424", "AutomationTransformToolHandle": "#242424bf", "AutomationTransformToolHandleActive": "#242424", "MutedAuditionClip": "#9c9c9c", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#bcbcbc", "DeactivatedClipHeader": "#5b5b5bdf", "DeactivatedClipHeaderForeground": "#bcbcbc", "ScaleAwareness": "#be98ff", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#3d3d3d", "MidiEditorBlackKeyBackground": "#22222226", "MidiEditorBackgroundWhiteKeySeparator": "#3d3d3d19", "RangeEditField3": "#f1ac00", "ScrollbarInnerHandleHover": "#4f4f4f", "ScrollbarInnerTrackHover": "#818181", "ScrollbarLCDHandleHover": "#5b5b5b", "ScrollbarLCDTrackHover": "#4f4f4f", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#cfcfcf", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}}.
 //
 // Inlet: airwin~'s info outlet (nparams / pname / display / levels / peaks / spec_in /
 //        spec_out / xfer / scope), plus "theme" messages from live.colors.
@@ -694,7 +791,7 @@ mgraphics.relative_coords = 0;
 mgraphics.autofill = 0;
 
 const CATEGORY = "Dynamics";
-const OPTION = "AB";
+const VIEWS = ["AB"];        // option ids shown as views (design/final.json)
 S.themes = {"dark": {"ControlForeground": "#b5b5b5", "TextDisabled": "#757575", "ControlDisabled": "#757575", "MeterBackground": "#181818", "SurfaceHighlight": "#464646", "SurfaceArea": "#242424", "Desktop": "#2a2a2a", "ViewCheckControlEnabledOn": "#ffad56", "ScrollbarInnerHandle": "#696969", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#696969", "ScrollbarLCDTrack": "#363636", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#3e3e3e", "PreferencesTab": "#363636", "SelectionFrame": "#757575", "ControlBackground": "#1e1e1e", "ControlFillHandle": "#5d5d5d", "ChosenDefault": "#ffad56", "ChosenRecord": "#ff5559", "ChosenPreListen": "#3c6ab6", "ImplicitArm": "#ff000064", "RangeDefault": "#03c3d5", "RangeDisabled": "#757575", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#007383", "RangeEditField2": "#a03c4c", "BipolReset": "#03c3d5", "ChosenAlternative": "#03c3d5", "ChosenAlert": "#e76942", "ChosenPlay": "#00d38d", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#2a2a2a", "SceneContrast": "#2a2a2a", "SelectionBackground": "#b0ddeb", "StandbySelectionBackground": "#637e86", "SelectionForeground": "#070707", "StandbySelectionForeground": "#070707", "SelectionBackgroundContrast": "#7a959e", "SurfaceBackground": "#363636", "TakeLaneTrackHighlighted": "#3e3e3e", "TakeLaneTrackNotHighlighted": "#303030", "AutomationColor": "#ff4d47", "AutomationGrid": "#0b0b0b", "LoopColor": "#919191", "OffGridLoopColor": "#8888884f", "ArrangementRulerMarkings": "#919191", "DetailViewRulerMarkings": "#919191", "ShadowDark": "#24242454", "ShadowLight": "#2b2b2bcc", "DisplayBackground": "#181818", "AbletonColor": "#00ff00", "WaveformColor": "#171717ef", "DimmedWaveformColor": "#696969df", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#e76942", "ControlOnForeground": "#070707", "ControlOffForeground": "#b5b5b5", "ControlOnDisabledForeground": "#242424", "ControlOffDisabledForeground": "#696969", "ControlOnAlternativeForeground": "#070707", "ControlTextBack": "#242424", "ControlContrastFrame": "#111111", "ControlSelectionFrame": "#919191", "ControlContrastTransport": "#363636", "ViewControlOn": "#ffad56", "ViewControlOff": "#464646", "Progress": "#ffad56", "ProgressText": "#636363", "TransportProgress": "#ffad56", "ClipSlotButton": "#1e1e1e", "BrowserBar": "#363636", "BrowserBarOverlayHintTextColor": "#5d5d5d", "BrowserDisabledItem": "#757575", "BrowserSampleWaveform": "#868686", "AutomationDisabled": "#646464", "AutomationMouseOver": "#ff9085", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#181818", "RetroDisplayBackgroundLine": "#3e3e3e", "RetroDisplayForeground": "#ffad56", "RetroDisplayForeground2": "#03c3d5", "RetroDisplayForegroundDisabled": "#868686", "RetroDisplayGreen": "#ffad56", "RetroDisplayRed": "#03c3d5", "RetroDisplayHandle1": "#ffad56", "RetroDisplayHandle2": "#ff697f", "RetroDisplayScaleText": "#868686", "RetroDisplayTitle": "#b5b5b5", "ThresholdLineColor": "#03c3d5", "GainReductionLineColor": "#ffad56", "InputCurveColor": "#535353", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#8686864c", "OutputCurveOutlineColor": "#bfbfbf", "SpectrumDefaultColor": "#535353", "SpectrumAlternativeColor": "#3c6ab6", "SpectrumGridLines": "#b6b6b63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#464646", "DrumRackScroller2": "#696969", "FilledDrumRackPad": "#b5b5b5", "SurfaceAreaFocus": "#242424", "FreezeColor": "#4391e6", "GridLabel": "#b5b5b57f", "GridLineBase": "#06060654", "ArrangerGridTiles": "#0a0a0a19", "DetailGridTiles": "#0a0a0a19", "GridGuideline": "#b5b5b5", "OffGridGuideline": "#b5b5b54f", "TreeColumnHeadBackground": "#464646", "TreeColumnHeadForeground": "#b5b5b5", "TreeColumnHeadSelected": "#464646", "TreeColumnHeadFocus": "#464646", "TreeColumnHeadControl": "#757575", "TreeRowCategoryForeground": "#757575", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#242424", "SearchIndication": "#ecca6d", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#757575", "ViewCheckControlDisabledOn": "#868686", "ViewCheckControlDisabledOff": "#5d5d5d", "BackgroundClip": "#5d5d5d", "BackgroundClipFrame": "#363636", "WarperTimeBarRulerBackground": "#363636", "WarperTimeBarMarkerBackground": "#303030", "BipolarPotiTriangle": "#111111", "Poti": "#111111", "DeactivatedPoti": "#2a2a2a", "PotiNeedle": "#181818", "DeactivatedPotiNeedle": "#2a2a2a", "PianoBlackKey": "#464646", "PianoWhiteKey": "#868686", "PianoKeySeparator": "#464646", "TransportOffBackground": "#363636", "TransportOffDisabledForeground": "#696969", "TransportOffForeground": "#b5b5b5", "TransportSelectionBackground": "#5d5d5d", "Modulation": "#009aac", "ModulationDisabled": "#79bdc7a9", "ModulationMouseOver": "#8cffff", "AutomationTransformToolFrame": "#292929bf", "AutomationTransformToolFrameActive": "#0b0b0b", "AutomationTransformToolHandle": "#292929bf", "AutomationTransformToolHandleActive": "#0b0b0b", "MutedAuditionClip": "#636363", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#3e3e3e", "DeactivatedClipHeader": "#696969df", "DeactivatedClipHeaderForeground": "#2a2a2a", "ScaleAwareness": "#b595fc", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#757575", "MidiEditorBlackKeyBackground": "#07070726", "MidiEditorBackgroundWhiteKeySeparator": "#0a0a0a19", "RangeEditField3": "#7b5732", "ScrollbarInnerHandleHover": "#757575", "ScrollbarInnerTrackHover": "#242424", "ScrollbarLCDHandleHover": "#757575", "ScrollbarLCDTrackHover": "#464646", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#5d5d5d", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}, "light": {"ControlForeground": "#121212", "TextDisabled": "#6e6e6e", "ControlDisabled": "#f1f1f1", "MeterBackground": "#242424", "SurfaceHighlight": "#bcbcbc", "SurfaceArea": "#6e6e6e", "Desktop": "#818181", "ViewCheckControlEnabledOn": "#ffb901", "ScrollbarInnerHandle": "#5b5b5b", "ScrollbarInnerTrack": "#00000000", "ScrollbarLCDHandle": "#4f4f4f", "ScrollbarLCDTrack": "#3d3d3d", "ScrollbarMixerShowOnScrollHandle": "#00000066", "DetailViewBackground": "#c6c6c6", "PreferencesTab": "#a5a5a5", "SelectionFrame": "#3d3d3d", "ControlBackground": "#cfcfcf", "ControlFillHandle": "#cfcfcf", "ChosenDefault": "#ffb901", "ChosenRecord": "#ff595f", "ChosenPreListen": "#1a7df1", "ImplicitArm": "#ff000064", "RangeDefault": "#00eeff", "RangeDisabled": "#f1f1f1", "RangeDisabledOff": "#636363", "LearnMidi": "#4034ef", "LearnKey": "#ff6400", "LearnMacro": "#00da48", "RangeEditField": "#00cadb", "RangeEditField2": "#f87680", "BipolReset": "#00eeff", "ChosenAlternative": "#00eeff", "ChosenAlert": "#ff7d43", "ChosenPlay": "#00faa3", "Clip1": "#8b7936", "Clip2": "#999565", "Clip3": "#b8ce93", "Clip4": "#afb95b", "Clip5": "#52ba46", "Clip6": "#81d24c", "Clip7": "#6baace", "Clip8": "#4881aa", "Clip9": "#954eb2", "Clip10": "#ff5f80", "Clip11": "#dc4848", "Clip12": "#d66b18", "Clip13": "#e0aa2a", "Clip14": "#ffec75", "Clip15": "#e7e6e6", "Clip16": "#a0a0a0", "ClipText": "#000000", "ClipBorder": "#000000", "SceneContrast": "#636363", "SelectionBackground": "#cdf8ff", "StandbySelectionBackground": "#abc6cb", "SelectionForeground": "#121212", "StandbySelectionForeground": "#121212", "SelectionBackgroundContrast": "#afcfd4", "SurfaceBackground": "#a5a5a5", "TakeLaneTrackHighlighted": "#bcbcbc", "TakeLaneTrackNotHighlighted": "#9c9c9c", "AutomationColor": "#ea3c3c", "AutomationGrid": "#121212", "LoopColor": "#3d3d3d", "OffGridLoopColor": "#24293364", "ArrangementRulerMarkings": "#3d3d3d", "DetailViewRulerMarkings": "#3d3d3d", "ShadowDark": "#12121254", "ShadowLight": "#8a8a8acc", "DisplayBackground": "#5b5b5b", "AbletonColor": "#00ff00", "WaveformColor": "#222222ef", "DimmedWaveformColor": "#5a5a5adf", "VelocityColor": "#e95449", "VelocitySelectedOrHovered": "#5b8cff", "NoteProbability": "#636363", "Alert": "#ff7d43", "ControlOnForeground": "#121212", "ControlOffForeground": "#121212", "ControlOnDisabledForeground": "#121212", "ControlOffDisabledForeground": "#6e6e6e", "ControlOnAlternativeForeground": "#121212", "ControlTextBack": "#dfdfdf", "ControlContrastFrame": "#4f4f4f", "ControlSelectionFrame": "#4f4f4f", "ControlContrastTransport": "#a5a5a5", "ViewControlOn": "#ffb901", "ViewControlOff": "#a5a5a5", "Progress": "#ffb901", "ProgressText": "#636363", "TransportProgress": "#ffb901", "ClipSlotButton": "#5b5b5b", "BrowserBar": "#a5a5a5", "BrowserBarOverlayHintTextColor": "#4f4f4f", "BrowserDisabledItem": "#4f4f4f", "BrowserSampleWaveform": "#6e6e6e", "AutomationDisabled": "#595959", "AutomationMouseOver": "#891a1c", "MidiNoteMaxVelocity": "#e95449", "RetroDisplayBackground": "#242424", "RetroDisplayBackgroundLine": "#5b5b5b", "RetroDisplayForeground": "#ffb901", "RetroDisplayForeground2": "#00eeff", "RetroDisplayForegroundDisabled": "#a5a5a5", "RetroDisplayGreen": "#ffb901", "RetroDisplayRed": "#00eeff", "RetroDisplayHandle1": "#ffb901", "RetroDisplayHandle2": "#f87680", "RetroDisplayScaleText": "#cfcfcf7f", "RetroDisplayTitle": "#cfcfcf", "ThresholdLineColor": "#00eeff", "GainReductionLineColor": "#ffb901", "InputCurveColor": "#bcbcbc54", "InputCurveOutlineColor": "#00000000", "OutputCurveColor": "#cecece3f", "OutputCurveOutlineColor": "#cfcfcf", "SpectrumDefaultColor": "#bcbcbc54", "SpectrumAlternativeColor": "#1a7df1", "SpectrumGridLines": "#a6a6a63f", "Operator1": "#e0d825", "Operator2": "#29d6cd", "Operator3": "#6571f6", "Operator4": "#f3751b", "DrumRackScroller1": "#898989", "DrumRackScroller2": "#6e6e6e", "FilledDrumRackPad": "#cfcfcf", "SurfaceAreaFocus": "#6e6e6e", "FreezeColor": "#4391e6", "GridLabel": "#3c3c3c7f", "GridLineBase": "#1010103f", "ArrangerGridTiles": "#0f0f0f11", "DetailGridTiles": "#0f0f0f11", "GridGuideline": "#121212", "OffGridGuideline": "#1313134f", "TreeColumnHeadBackground": "#bcbcbc", "TreeColumnHeadForeground": "#3d3d3d", "TreeColumnHeadSelected": "#cfcfcf", "TreeColumnHeadFocus": "#bcbcbc", "TreeColumnHeadControl": "#6e6e6e", "TreeRowCategoryForeground": "#4f4f4f", "TreeRowCategoryBackground": "#00000000", "BrowserTagBackground": "#bcbcbc", "SearchIndication": "#ffde72", "SearchIndicationStandby": "#ccaa66", "KeyZoneBackground": "#acf6b4", "KeyZoneCrossfadeRamp": "#28bd56", "VelocityZoneBackground": "#f5a7a3", "VelocityZoneCrossfadeRamp": "#e95449", "SelectorZoneBackground": "#bed6f4", "SelectorZoneCrossfadeRamp": "#2d66d2", "ViewCheckControlEnabledOff": "#242424", "ViewCheckControlDisabledOn": "#dfdfdf", "ViewCheckControlDisabledOff": "#6e6e6e", "BackgroundClip": "#898989", "BackgroundClipFrame": "#6e6e6e", "WarperTimeBarRulerBackground": "#878787", "WarperTimeBarMarkerBackground": "#929292", "BipolarPotiTriangle": "#242424", "Poti": "#242424", "DeactivatedPoti": "#6e6e6e", "PotiNeedle": "#242424", "DeactivatedPotiNeedle": "#6e6e6e", "PianoBlackKey": "#5a5a5a", "PianoWhiteKey": "#f1f1f1", "PianoKeySeparator": "#a5a5a5", "TransportOffBackground": "#a5a5a5", "TransportOffDisabledForeground": "#6e6e6e", "TransportOffForeground": "#121212", "TransportSelectionBackground": "#cfcfcf", "Modulation": "#008cad", "ModulationDisabled": "#87a9b5", "ModulationMouseOver": "#005f79", "AutomationTransformToolFrame": "#242424bf", "AutomationTransformToolFrameActive": "#242424", "AutomationTransformToolHandle": "#242424bf", "AutomationTransformToolHandleActive": "#242424", "MutedAuditionClip": "#9c9c9c", "LinkedTrackHover": "#b3d4e5", "ExpressionLaneHeaderHighlight": "#bcbcbc", "DeactivatedClipHeader": "#5b5b5bdf", "DeactivatedClipHeaderForeground": "#bcbcbc", "ScaleAwareness": "#be98ff", "Maximum": "#ffa519", "AboveZeroDecibel": "#ffa519", "ZeroDecibel": "#ffa519", "BelowZeroDecibel1": "#ffa519", "BelowZeroDecibel2": "#ffa519", "Minimum": "#ffa519", "MainViewFocusIndicator": "#3d3d3d", "MidiEditorBlackKeyBackground": "#22222226", "MidiEditorBackgroundWhiteKeySeparator": "#3d3d3d19", "RangeEditField3": "#f1ac00", "ScrollbarInnerHandleHover": "#4f4f4f", "ScrollbarInnerTrackHover": "#818181", "ScrollbarLCDHandleHover": "#5b5b5b", "ScrollbarLCDTrackHover": "#4f4f4f", "ScrollbarMixerShowOnScrollHandleHover": "#0000007f", "RetroDisplayControlSelectionFrame": "#cfcfcf", "ThresholdLineColorHover": "#5b8cff", "SecondarySelectionForeground": "#0000007f"}};
 S.theme = "dark";
 S.cat = CATEGORY;
@@ -709,8 +806,10 @@ function log() {
   f.close();
 }
 
+const PATCHER = this.patcher, BOX = this.box;   // captured at load: "this" inside handlers varies
+
 const DES = DESIGNS[CATEGORY];
-const OPT = DES.options.find(o => o.id === OPTION) || DES.options[0];
+const OPT = VIEWS.length > 1 ? composeViews(DES, VIEWS) : (DES.options.find(o => o.id === VIEWS[0]) || DES.options[0]);
 
 let st = newState();
 let params = [];
@@ -757,21 +856,44 @@ function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redr
 function anything() {} // category, pvalue, …: not needed for drawing
 
 // ---------------------------------------------------------------- controls are Live objects
+// Positions are recorded in device pixels (S.offX: offset of the current view).
+const _readout = readout;
 knob = function (c, th, x, y, w, p, v, big) {
-  rec.push({ k: p && p._i !== undefined ? "dial" : "gain", i: p ? p._i : -1, name: p ? p.name : "", x, y: y - HEAD_H, w, big: !!big });
+  hint(x, y, w, big ? 58 : 50, p.name, p.info || "");
+  rec.push({ k: p && p._i !== undefined ? "dial" : "gain", i: p ? p._i : -1, name: p ? p.name : "", x: x + S.offX, y: y - HEAD_H, w, big: !!big });
 };
-menu = function (c, th, x, y, w) { rec.push({ k: "menu", x, y: y - HEAD_H, w }); };
-arrows = function (c, th, x, y) { rec.push({ k: "arrows", x, y: y - HEAD_H }); };
+readout = function (c, th, x, y, w, p, v) {
+  _readout(c, th, x, y, w, p, v);           // the display draws the number; an invisible dial takes the drag
+  rec.push({ k: "readout", i: p._i, name: p.name, x: x + S.offX, y: y - HEAD_H - 11, w });
+};
+menu = function (c, th, x, y, w) { rec.push({ k: "menu", x: x + S.offX, y: y - HEAD_H, w }); };
+arrows = function (c, th, x, y) { rec.push({ k: "arrows", x: x + S.offX, y: y - HEAD_H }); };
 viewTabs = function (c, th, x, y, labels, active) {
   // the device's live.tab "view" draws these; record the area it must cover
   let w = 0; c.font = `400 9.5px ${FONT}`;
   for (const l of labels) w += Math.ceil(c.measureText(l).width) + 14;
-  rec.push({ k: "tab", x, y: y - HEAD_H, w: w - 2, labels });
+  rec.push({ k: "tab", x: x + S.offX, y: y - HEAD_H, w: w - 2, h: 15, labels });
   return [];
+};
+viewTabsV = function (c, th, x, y, w, labels, active) {
+  rec.push({ k: "tab", x: x + S.offX, y: y - HEAD_H, w, h: labels.length * 15, labels });
 };
 
 function script() { const a = arrayfromargs(arguments); log("script", a.join(" ")); outlet(0, ["script"].concat(a)); }
 function rect(id, x, y, w, h) { script("sendbox", id, "presentation_rect", Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+
+// a dial under a readout is invisible (the display draws its number); elsewhere it looks normal
+const DIAL_COLORS = ["dialcolor", "activedialcolor", "fgdialcolor", "activefgdialcolor", "needlecolor", "activeneedlecolor",
+                     "bordercolor", "focusbordercolor", "panelcolor", "textcolor", "tricolor", "tribordercolor"];
+const dialLook = {}, dialDefaults = {};
+function setDialInvisible(i, inv) {
+  if (dialLook[i] === inv) return;
+  const o = PATCHER ? PATCHER.getnamed("dial" + i) : null;
+  if (!o) return;
+  if (!dialDefaults[i]) { dialDefaults[i] = {}; DIAL_COLORS.forEach(a => { try { dialDefaults[i][a] = o.getattr(a); } catch (e) {} }); }
+  DIAL_COLORS.forEach(a => { try { o.setattr(a, inv ? [0, 0, 0, 0] : dialDefaults[i][a]); } catch (e) {} });
+  dialLook[i] = inv;
+}
 
 function publishLayout() {
   const key = JSON.stringify(rec.map(r => [r.k, r.i, Math.round(r.x), Math.round(r.y), Math.round(r.w || 0), r.big, r.name]));
@@ -783,10 +905,15 @@ function publishLayout() {
   for (const r of rec) {
     if (r.k === "dial") {
       const dw = r.big ? 46 : 36, dh = r.big ? 36 : 28;
+      setDialInvisible(r.i, false);
       rect("name" + r.i, r.x, r.y, r.w, 13);
       rect("dial" + r.i, r.x + (r.w - dw) / 2, r.y + 12, dw, dh);
       rect("value" + r.i, r.x, r.y + 12 + dh, r.w, 13);
       ["name", "dial", "value"].forEach(p => { script("show", p + r.i); shown[p + r.i] = 1; });
+    } else if (r.k === "readout") {
+      setDialInvisible(r.i, true);
+      rect("dial" + r.i, r.x, r.y, r.w, 28);
+      script("show", "dial" + r.i); shown["dial" + r.i] = 1;
     } else if (r.k === "gain") {
       const id = gains++ === 0 ? "gainIn" : "gainOut";
       rect(id, r.x, r.y, r.w, 52);
@@ -798,9 +925,37 @@ function publishLayout() {
       tabs.push(r);
     }
   }
-  for (let i = 0; i < 13; i++) if (!shown["dial" + i]) ["name", "dial", "value"].forEach(p => script("hide", p + i));
-  if (tabs.length) { rect("view", tabs[0].x, tabs[0].y, tabs[0].w, 15); script("show", "view"); }
+  for (let i = 0; i < 13; i++) ["name", "dial", "value"].forEach(p => { if (!shown[p + i]) script("hide", p + i); });
+  if (tabs.length) { rect("view", tabs[0].x, tabs[0].y, tabs[0].w, tabs[0].h); script("show", "view"); }
   else script("hide", "view");
+}
+
+// ---------------------------------------------------------------- Info View
+// Live shows a hovered object's annotation in its Info View. The display sets its own
+// annotation to the hint under the mouse; dials get their effect's control name and text.
+let hints = [], lastHint = null;
+function onidle(x, y) {
+  let best = null;
+  const yy = y + HEAD_H;
+  for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
+  if (best === lastHint) return;
+  lastHint = best;
+  log("hover", best ? best.title : "-");
+  try {
+    BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
+    BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
+  } catch (e) {}
+}
+function onidleout() { lastHint = null; }
+let annotated = "";
+function annotateDials() {
+  const key = (S.effName || "") + params.map(p => p.name).join("|");
+  if (key === annotated || !S.effName) return;
+  annotated = key;
+  params.forEach((p, i) => {
+    script("sendbox", "dial" + i, "annotation_name", p.name);
+    script("sendbox", "dial" + i, "annotation", `${p.name}: a control of ${S.effName}. ${S.effWhat || ""}`);
+  });
 }
 
 // the device's "view" tab (live.tab) reports its index here
@@ -813,12 +968,15 @@ function paint() {
   rec = [];
   const th = tok();
   try {
+    S.hints = [];
     OPT.draw(c, th, st, params, params.map(() => 0.5));
+    hints = S.hints;
   } catch (e) {
     post("aw_ui draw error: " + e + "\n");
     log("draw error", e, e && e.stack);
   }
   publishLayout();
+  annotateDials();
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme

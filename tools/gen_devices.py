@@ -206,7 +206,7 @@ def build(category, names):
     # the display, first so it sits behind every control; it places the controls itself
     display = p.box("v8ui", [700, 200, width, DEVICE_H], varname="display",
                     filename=f"aw_ui_{category}.js", numinlets=1, numoutlets=1,
-                    outlettype=[""], ignoreclick=1, border=0, parameter_enable=0,
+                    outlettype=[""], ignoreclick=0, border=0, parameter_enable=0,
                     presentation=1, presentation_rect=[0.0, 0.0, width, float(DEVICE_H)])
     menu = p.box("live.menu", [200, 20, 140, 15], varname="Effect", numinlets=1, numoutlets=3,
                  annotation_name="Effect",
