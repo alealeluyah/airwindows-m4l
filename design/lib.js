@@ -4,6 +4,12 @@
 
 const S = { themes: null, reg: [], byCat: {}, decisions: {}, theme: "dark", zoom: 2, mocks: [] };
 
+// Hover hints (Live's Info View). Coordinates are canvas units (header included). S.offX is
+// the x offset of the view being drawn when several views share one device.
+S.hints = [];
+S.offX = 0;
+function hint(x, y, w, h, title, text) { S.hints.push({ x: x + S.offX, y, w, h, title, text }); }
+
 const FONT = '"Ableton Sans Small", -apple-system, sans-serif';
 const DEVICE_H = 169;   // Live's device body height
 const HEAD_H = 18;      // device title bar
@@ -56,6 +62,7 @@ function shortName(n) { return n.length > 9 ? n.slice(0, 8) + "." : n; }
 // Live-style dial: label above, 270° arc, needle, value below. Cell is w x 50.
 function knob(c, th, x, y, w, p, v, big = false) {
   const r = big ? 15 : 11, cx = x + w / 2, cy = y + (big ? 30 : 25);
+  hint(x, y, w, big ? 58 : 50, p.name, p.info || `A control of ${S.effName || "this effect"}. ${S.effWhat || ""}`.trim());
   txt(c, cx, y + 9, shortName(p.name), { color: th.text });
   const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25, av = a0 + (a1 - a0) * v;
   c.lineCap = "butt";
@@ -68,11 +75,13 @@ function knob(c, th, x, y, w, p, v, big = false) {
 }
 function menu(c, th, x, y, w, label) {
   label = S.effName || label;   // always show the effect being previewed
+  hint(x, y, w, 15, "Effect", `Chooses which Airwindows effect this device runs. Now: ${label}. ${S.effWhat || ""}`.trim());
   rr(c, x + 0.5, y + 0.5, w, 14, 1, th.ctrlBg, th.frame);
   txt(c, x + 4, y + 11, label, { color: th.text, align: "left" });
   c.fillStyle = th.text; c.beginPath(); c.moveTo(x + w - 10, y + 5); c.lineTo(x + w - 3, y + 5); c.lineTo(x + w - 6.5, y + 10); c.fill();
 }
 function arrows(c, th, x, y) {
+  hint(x, y, 30, 15, "Previous / Next Effect", "Steps to the previous or next effect in the menu.");
   for (const [i, d] of [[0, -1], [1, 1]]) {
     const bx = x + i * 15;
     rr(c, bx + 0.5, y + 0.5, 14, 14, 1, th.ctrlBg, th.frame);
@@ -127,6 +136,7 @@ function stepDynamics(st, dt) {
   st.gr += (target - st.gr) * (target > st.gr ? 0.6 : 0.08);          // attack / release
   st.inL = Math.max(inDb, st.inL - 24 * dt); st.outL = Math.max(inDb - st.gr + 3, st.outL - 24 * dt);
   st.hist.push({ inA: d.env, out: st.outL, gr: st.gr });
+  st.hist.simThr = true;
   if (st.hist.length > 600) st.hist.shift();
 }
 function stepReverb(st, dt) {
@@ -201,6 +211,8 @@ function grNeedle(c, th, x, y, w, h, gr) {
   c.restore();
   txt(c, x + w - 6, y + 12, "GR dB", { color: th.scale, size: 9, align: "right" });
 }
+// the simulated compressor has a known threshold (-14 dB); real effects do not report one
+function st_thr(hist) { return hist.simThr ? -14 : null; }
 function activity(c, th, x, y, w, h, hist) {
   rr(c, x, y, w, h, 3, th.display);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
@@ -211,7 +223,7 @@ function activity(c, th, x, y, w, h, hist) {
   for (let i = 0; i < n; i++) { const e = hist[hist.length - 1 - i]; c.lineTo(x + w - i, toY(db(e.inA * 0.9 + 0.02))); }
   c.lineTo(x + w - n, base); c.fill();
   // threshold line
-  c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, toY(-14)); c.lineTo(x + w, toY(-14)); c.stroke();
+  if (st_thr(hist) !== null) { c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath(); c.moveTo(x, toY(-14)); c.lineTo(x + w, toY(-14)); c.stroke(); }
   // gain reduction trace (orange, from the top)
   c.strokeStyle = th.orange; c.lineWidth = 1.5; c.beginPath();
   for (let i = 0; i < n; i++) { const e = hist[hist.length - 1 - i]; const yy = y + 6 + e.gr * 3; i ? c.lineTo(x + w - i, yy) : c.moveTo(x + w - i, yy); }
@@ -282,6 +294,63 @@ function decayMap(c, th, x, y, w, h, st) {
   const ticks = st.envHist ? ["-3 s", "-2 s", "-1 s", "now"] : ["0", "1 s", "2 s", "3 s"];
   ticks.forEach((s, i) => txt(c, x + 6 + (w - 12) * i / 3, y + h - 3, s, { color: th.scale, size: 8.5, align: i ? (i === 3 ? "right" : "center") : "left" }));
 }
+// A control shown as a draggable number (like Hybrid Reverb's display row). In the device an
+// invisible live.dial lies over it, so it drags like a dial and stays automatable.
+function readout(c, th, x, y, w, p, v) {
+  hint(x, y - 11, w, 28, p.name, p.info || `A control of ${S.effName || "this effect"}. Drag up or down to change it.`);
+  txt(c, x + w / 2, y, p.name, { color: th.dispText, size: 10 });
+  txt(c, x + w / 2, y + 15, fmt(p.display), { color: th.cyan, size: 11 });
+}
+
+// Colour key in one style for every device: small swatches with labels, left to right.
+// items: [[colour, label, explanation], ...]. Each item also gets a hover hint. Returns end x.
+function legend(c, th, x, y, items, o = {}) {
+  const size = o.size || 8.5;
+  c.font = `400 ${size}px ${FONT}`;
+  let cx = x;
+  for (const [col, label, info] of items) {
+    const tw = Math.ceil(c.measureText(label).width);
+    c.fillStyle = col;
+    if (o.line) c.fillRect(cx, y - 4, 8, 2); else c.fillRect(cx, y - 6, 6, 6);
+    txt(c, cx + (o.line ? 11 : 9), y, label, { color: o.color || th.dispText, align: "left", size });
+    if (info) hint(cx - 1, y - 9, tw + 12, 12, label, info);
+    cx += tw + (o.line ? 11 : 9) + (o.gap || 8);
+  }
+  return cx;
+}
+
+// Several options of one category in one device, switched by the View selector at the top of
+// the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
+// own state (and history), so switching is instant. Narrower views are centred.
+function composeViews(des, ids) {
+  const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
+  const W = Math.max(...opts.map(o => o.width));
+  const labels = opts.map(o => o.short || o.name.split(/[ (—]/)[0]);
+  const sub = st => (st.sub = st.sub || opts.map(() => newState()));
+  return {
+    id: opts.map(o => o.id).join("+"), name: opts.map(o => o.name).join(" / "), width: W, views: labels,
+    why: "Views: " + opts.map((o, i) => `${labels[i]} — ${o.why}`).join(" "),
+    bullets: ["Click a View button (top of the Input/Output column) to switch the display"].concat(opts.map((o, i) => `${labels[i]}: ${o.bullets[0]}`)),
+    step(st, dt) { sub(st).forEach((s, i) => { s.t = st.t; opts[i].step(s, dt); }); },
+    live(st, m, dt) { sub(st).forEach((s, i) => { s.t = st.t; (opts[i].live || liveGeneric)(s, m, dt); }); },
+    click(x, y, st) {
+      for (const [i, r] of (st.viewRects || []).entries())
+        if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) { st.view = i; return; }
+      const v = Math.min(st.view || 0, opts.length - 1);
+      if (opts[v].click) opts[v].click(x - (st.dx || 0), y, sub(st)[v]);
+    },
+    draw(c, th, st, ps, vals) {
+      const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
+      const dx = Math.round((W - o.width) / 2);
+      st.dx = dx;
+      c.save(); c.translate(dx, 0);
+      S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
+      try { o.draw(c, th, sub(st)[v], ps, vals); }
+      finally { st.viewRects = S.viewRects; c.restore(); S.offX = 0; S.gainX = undefined; S.views = null; }
+    },
+  };
+}
+
 // Word-wrapped text block (e.g. the effect description) inside width w, at most maxLines.
 function wrapText(c, x, y, w, text, o = {}) {
   c.font = `400 ${o.size || 9.5}px ${FONT}`;
@@ -299,20 +368,39 @@ function wrapText(c, x, y, w, text, o = {}) {
 // Two dB dials (Input above, Output below) and a stereo In / Out meter pair. Width GAIN_W.
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
+  if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
   const y = HEAD_H + 6, h = DEVICE_H - 12;
   rr(c, x, y, GAIN_W, h, 3, th.panel);
+  let top = y;
+  if (S.views) {                                      // view selector at the top of the column
+    viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
+    top = y + 3 + S.views.labels.length * 15 + 1;
+  }
   const dbTxt = v => (v > 0 ? "+" : "") + v.toFixed(1) + " dB";
-  knob(c, th, x - 2, y + 8, 44, { name: "Input", display: dbTxt(st.inGain || 0) }, 0.5 + (st.inGain || 0) / 72);
-  knob(c, th, x - 2, y + 8 + h / 2, 44, { name: "Output", display: dbTxt(st.outGain || 0) }, 0.5 + (st.outGain || 0) / 72);
+  const room = y + h - top, kh = Math.min(room / 2, 78);
+  knob(c, th, x - 2, top + Math.max(2, (kh - 50) / 2), 44, { name: "Input", display: dbTxt(st.inGain || 0),
+    info: "Input gain in dB, applied before the effect. Drives the effect harder or softer; the left meter pair shows the level after it." }, 0.5 + (st.inGain || 0) / 72);
+  knob(c, th, x - 2, top + kh + Math.max(0, (kh - 50) / 2), 44, { name: "Output", display: dbTxt(st.outGain || 0),
+    info: "Output gain in dB, applied after the effect. The right meter pair shows the level after it." }, 0.5 + (st.outGain || 0) / 72);
   const f = dbv => Math.max(0, 1 + (Number.isFinite(dbv) ? dbv : -60) / 48);
-  const mx = x + 44, mh = h - 8;
-  meterV(c, th, mx, y + 4, 3, mh, f(st.inL)); meterV(c, th, mx + 4, y + 4, 3, mh, f(st.inL) * 0.96);
-  meterV(c, th, mx + 10, y + 4, 3, mh, f(st.outL)); meterV(c, th, mx + 14, y + 4, 3, mh, f(st.outL) * 0.97);
+  const mx = x + 44, mt = top + 1, mh = y + h - 4 - mt;
+  meterV(c, th, mx, mt, 3, mh, f(st.inL)); meterV(c, th, mx + 4, mt, 3, mh, f(st.inL) * 0.96);
+  meterV(c, th, mx + 10, mt, 3, mh, f(st.outL)); meterV(c, th, mx + 14, mt, 3, mh, f(st.outL) * 0.97);
+  hint(mx, mt, 18, mh, "In / Out Meters", "Left pair: input level after the Input gain. Right pair: output level after the Output gain. Scale 0 dB (top) to -48 dB.");
 }
 
-// View switch, like Compressor's display buttons: draws labelled tabs, returns their rects.
+// Vertical view selector (several views in one device). Rects go to S.viewRects for clicks.
+function viewTabsV(c, th, x, y, w, labels, active) {
+  S.viewRects = labels.map((l, i) => {
+    toggle(c, th, x, y + i * 15, w, l, i === active);
+    return { x: x + S.offX, y: y + i * 15, w, h: 14 };
+  });
+  hint(x, y, w, labels.length * 15, "View", `Chooses what the display shows: ${labels.join(", ")}. The controls and the sound do not change.`);
+}
+
 function viewTabs(c, th, x, y, labels, active) {
   let cx = x;
+  hint(x, y, labels.length * 60, 15, "View", `Chooses what the display shows: ${labels.join(", ")}.`);
   return labels.map((l, i) => {
     c.font = `400 9.5px ${FONT}`;
     const w = Math.ceil(c.measureText(l).width) + 12;

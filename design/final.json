@@ -1,0 +1,112 @@
+{
+ "Ambience": [
+  "C",
+  "A",
+  "B"
+ ],
+ "Amp Sims": [
+  "B",
+  "C"
+ ],
+ "Bass": [
+  "A",
+  "C"
+ ],
+ "Biquads": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Brightness": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Clipping": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Consoles": [
+  "C",
+  "A",
+  "B"
+ ],
+ "Distortion": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Dithers": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Dynamics": [
+  "AB"
+ ],
+ "Effects": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Filter": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Lo-Fi": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Noise": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Reverb": [
+  "B",
+  "C"
+ ],
+ "Saturation": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Stereo": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Subtlety": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Tape": [
+  "B",
+  "A",
+  "C"
+ ],
+ "Tone Color": [
+  "C",
+  "A",
+  "B"
+ ],
+ "Unclassified": [
+  "A",
+  "B",
+  "C"
+ ],
+ "Utility": [
+  "B",
+  "A",
+  "C"
+ ],
+ "XYZ Filters": [
+  "C",
+  "A",
+  "B"
+ ]
+}

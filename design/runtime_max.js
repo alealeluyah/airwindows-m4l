@@ -18,7 +18,7 @@ mgraphics.relative_coords = 0;
 mgraphics.autofill = 0;
 
 const CATEGORY = __CATEGORY__;
-const OPTION = __OPTION__;
+const VIEWS = __VIEWS__;        // option ids shown as views (design/final.json)
 S.themes = __THEMES__;
 S.theme = "dark";
 S.cat = CATEGORY;
@@ -33,8 +33,10 @@ function log() {
   f.close();
 }
 
+const PATCHER = this.patcher, BOX = this.box;   // captured at load: "this" inside handlers varies
+
 const DES = DESIGNS[CATEGORY];
-const OPT = DES.options.find(o => o.id === OPTION) || DES.options[0];
+const OPT = VIEWS.length > 1 ? composeViews(DES, VIEWS) : (DES.options.find(o => o.id === VIEWS[0]) || DES.options[0]);
 
 let st = newState();
 let params = [];
@@ -81,21 +83,44 @@ function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redr
 function anything() {} // category, pvalue, …: not needed for drawing
 
 // ---------------------------------------------------------------- controls are Live objects
+// Positions are recorded in device pixels (S.offX: offset of the current view).
+const _readout = readout;
 knob = function (c, th, x, y, w, p, v, big) {
-  rec.push({ k: p && p._i !== undefined ? "dial" : "gain", i: p ? p._i : -1, name: p ? p.name : "", x, y: y - HEAD_H, w, big: !!big });
+  hint(x, y, w, big ? 58 : 50, p.name, p.info || "");
+  rec.push({ k: p && p._i !== undefined ? "dial" : "gain", i: p ? p._i : -1, name: p ? p.name : "", x: x + S.offX, y: y - HEAD_H, w, big: !!big });
 };
-menu = function (c, th, x, y, w) { rec.push({ k: "menu", x, y: y - HEAD_H, w }); };
-arrows = function (c, th, x, y) { rec.push({ k: "arrows", x, y: y - HEAD_H }); };
+readout = function (c, th, x, y, w, p, v) {
+  _readout(c, th, x, y, w, p, v);           // the display draws the number; an invisible dial takes the drag
+  rec.push({ k: "readout", i: p._i, name: p.name, x: x + S.offX, y: y - HEAD_H - 11, w });
+};
+menu = function (c, th, x, y, w) { rec.push({ k: "menu", x: x + S.offX, y: y - HEAD_H, w }); };
+arrows = function (c, th, x, y) { rec.push({ k: "arrows", x: x + S.offX, y: y - HEAD_H }); };
 viewTabs = function (c, th, x, y, labels, active) {
   // the device's live.tab "view" draws these; record the area it must cover
   let w = 0; c.font = `400 9.5px ${FONT}`;
   for (const l of labels) w += Math.ceil(c.measureText(l).width) + 14;
-  rec.push({ k: "tab", x, y: y - HEAD_H, w: w - 2, labels });
+  rec.push({ k: "tab", x: x + S.offX, y: y - HEAD_H, w: w - 2, h: 15, labels });
   return [];
+};
+viewTabsV = function (c, th, x, y, w, labels, active) {
+  rec.push({ k: "tab", x: x + S.offX, y: y - HEAD_H, w, h: labels.length * 15, labels });
 };
 
 function script() { const a = arrayfromargs(arguments); log("script", a.join(" ")); outlet(0, ["script"].concat(a)); }
 function rect(id, x, y, w, h) { script("sendbox", id, "presentation_rect", Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+
+// a dial under a readout is invisible (the display draws its number); elsewhere it looks normal
+const DIAL_COLORS = ["dialcolor", "activedialcolor", "fgdialcolor", "activefgdialcolor", "needlecolor", "activeneedlecolor",
+                     "bordercolor", "focusbordercolor", "panelcolor", "textcolor", "tricolor", "tribordercolor"];
+const dialLook = {}, dialDefaults = {};
+function setDialInvisible(i, inv) {
+  if (dialLook[i] === inv) return;
+  const o = PATCHER ? PATCHER.getnamed("dial" + i) : null;
+  if (!o) return;
+  if (!dialDefaults[i]) { dialDefaults[i] = {}; DIAL_COLORS.forEach(a => { try { dialDefaults[i][a] = o.getattr(a); } catch (e) {} }); }
+  DIAL_COLORS.forEach(a => { try { o.setattr(a, inv ? [0, 0, 0, 0] : dialDefaults[i][a]); } catch (e) {} });
+  dialLook[i] = inv;
+}
 
 function publishLayout() {
   const key = JSON.stringify(rec.map(r => [r.k, r.i, Math.round(r.x), Math.round(r.y), Math.round(r.w || 0), r.big, r.name]));
@@ -107,10 +132,15 @@ function publishLayout() {
   for (const r of rec) {
     if (r.k === "dial") {
       const dw = r.big ? 46 : 36, dh = r.big ? 36 : 28;
+      setDialInvisible(r.i, false);
       rect("name" + r.i, r.x, r.y, r.w, 13);
       rect("dial" + r.i, r.x + (r.w - dw) / 2, r.y + 12, dw, dh);
       rect("value" + r.i, r.x, r.y + 12 + dh, r.w, 13);
       ["name", "dial", "value"].forEach(p => { script("show", p + r.i); shown[p + r.i] = 1; });
+    } else if (r.k === "readout") {
+      setDialInvisible(r.i, true);
+      rect("dial" + r.i, r.x, r.y, r.w, 28);
+      script("show", "dial" + r.i); shown["dial" + r.i] = 1;
     } else if (r.k === "gain") {
       const id = gains++ === 0 ? "gainIn" : "gainOut";
       rect(id, r.x, r.y, r.w, 52);
@@ -122,9 +152,37 @@ function publishLayout() {
       tabs.push(r);
     }
   }
-  for (let i = 0; i < 13; i++) if (!shown["dial" + i]) ["name", "dial", "value"].forEach(p => script("hide", p + i));
-  if (tabs.length) { rect("view", tabs[0].x, tabs[0].y, tabs[0].w, 15); script("show", "view"); }
+  for (let i = 0; i < 13; i++) ["name", "dial", "value"].forEach(p => { if (!shown[p + i]) script("hide", p + i); });
+  if (tabs.length) { rect("view", tabs[0].x, tabs[0].y, tabs[0].w, tabs[0].h); script("show", "view"); }
   else script("hide", "view");
+}
+
+// ---------------------------------------------------------------- Info View
+// Live shows a hovered object's annotation in its Info View. The display sets its own
+// annotation to the hint under the mouse; dials get their effect's control name and text.
+let hints = [], lastHint = null;
+function onidle(x, y) {
+  let best = null;
+  const yy = y + HEAD_H;
+  for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
+  if (best === lastHint) return;
+  lastHint = best;
+  log("hover", best ? best.title : "-");
+  try {
+    BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
+    BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
+  } catch (e) {}
+}
+function onidleout() { lastHint = null; }
+let annotated = "";
+function annotateDials() {
+  const key = (S.effName || "") + params.map(p => p.name).join("|");
+  if (key === annotated || !S.effName) return;
+  annotated = key;
+  params.forEach((p, i) => {
+    script("sendbox", "dial" + i, "annotation_name", p.name);
+    script("sendbox", "dial" + i, "annotation", `${p.name}: a control of ${S.effName}. ${S.effWhat || ""}`);
+  });
 }
 
 // the device's "view" tab (live.tab) reports its index here
@@ -137,12 +195,15 @@ function paint() {
   rec = [];
   const th = tok();
   try {
+    S.hints = [];
     OPT.draw(c, th, st, params, params.map(() => 0.5));
+    hints = S.hints;
   } catch (e) {
     post("aw_ui draw error: " + e + "\n");
     log("draw error", e, e && e.stack);
   }
   publishLayout();
+  annotateDials();
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme

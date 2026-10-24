@@ -209,6 +209,8 @@ def build(category, names):
                     outlettype=[""], ignoreclick=1, border=0, parameter_enable=0,
                     presentation=1, presentation_rect=[0.0, 0.0, width, float(DEVICE_H)])
     menu = p.box("live.menu", [200, 20, 140, 15], varname="Effect", numinlets=1, numoutlets=3,
+                 annotation_name="Effect",
+                 annotation=f"Chooses which Airwindows {category} effect this device runs. Each effect has its own controls.",
                  outlettype=["", "", "float"], parameter_enable=1, presentation=1,
                  presentation_rect=[PANEL_X + 6, PANEL_Y + 20, PANEL_W - 12, 15],
                  saved_attribute_attributes={"valueof": {
@@ -220,6 +222,8 @@ def build(category, names):
     # Live recalls lower parameter_order first: the effect, then the dial values
     p.params[menu] = ["Effect", "Effect", 0]
     arrows = p.box("live.arrows", [360, 20, 40, 15], varname="arrows", numinlets=1,
+                   annotation_name="Previous / Next Effect",
+                   annotation="Steps to the previous or next effect in the menu.",
                    numoutlets=1, outlettype=[""], leftarrow=1, rightarrow=1, uparrow=0,
                    downarrow=0, presentation=1,
                    presentation_rect=[PANEL_X + PANEL_W - 46, PANEL_Y + 3, 40, 14])
@@ -269,7 +273,10 @@ def build(category, names):
 
     # Input / Output gain (dB), on every device
     for i, (vn, long, msg) in enumerate([("gainIn", "Input", "ingain"), ("gainOut", "Output", "outgain")]):
+        info = ("Input gain in dB, applied before the effect. Drives the effect harder or softer."
+                if i == 0 else "Output gain in dB, applied after the effect.")
         g = p.box("live.dial", [1300 + i * 60, 20, 44, 48], varname=vn, numinlets=1, numoutlets=2,
+                  annotation_name=long, annotation=info,
                   outlettype=["", "float"], parameter_enable=1, showname=1, shownumber=1,
                   presentation=1, presentation_rect=[width - 66 + 0, 8 + i * 80, 44, 52],
                   saved_attribute_attributes={"valueof": {
@@ -284,10 +291,13 @@ def build(category, names):
 
     # view switch, for designs with more than one display view
     if ui["tabs"]:
-        tab = p.box("live.tab", [1450, 20, 120, 15], varname="view", numinlets=1, numoutlets=3,
-                    outlettype=["", "", "float"], parameter_enable=1, num_lines_patching=1,
-                    num_lines_presentation=1, presentation=1, hidden=0,
-                    presentation_rect=[width / 2, 4, 120, 15],
+        rows = len(ui["tabs"]) if ui.get("vertical") else 1
+        tab = p.box("live.tab", [1450, 20, 120, 15 * rows], varname="view", numinlets=1, numoutlets=3,
+                    outlettype=["", "", "float"], parameter_enable=1, num_lines_patching=rows,
+                    num_lines_presentation=rows, presentation=1, hidden=0,
+                    presentation_rect=[width - 64, 9, 58, 15 * rows],
+                    annotation_name="View",
+                    annotation="Chooses what the display shows: " + ", ".join(ui["tabs"]) + ". The controls and the sound do not change.",
                     saved_attribute_attributes={"valueof": {
                         "parameter_enum": ui["tabs"], "parameter_longname": "View",
                         "parameter_shortname": "View", "parameter_type": 2,

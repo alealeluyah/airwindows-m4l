@@ -4,7 +4,7 @@ DESIGNS["Dynamics"] = {
     refs: [["GlueL12.png", "Glue Compressor"], ["CompressorL12.png", "Compressor"], ["LimiterL12.png", "Limiter"]],
     lead: "Visual cue: how much the effect is turning the level down (gain reduction), measured live from input vs output.",
     options: [
-      { id: "AB", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics, live: liveGeneric,
+      { id: "AB", short: "Glue+Comp", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics, live: liveGeneric,
         why: "One display with two views, switched by the buttons in its header like Compressor: Glue's gain-reduction needle, or Compressor's activity history. Input and Output gain on the right.",
         bullets: ["Click Needle / Activity in the display header to switch views (a saved device setting)",
                   "Both views are driven by input vs output level (gain reduction), measured by airwin~",
@@ -20,8 +20,17 @@ DESIGNS["Dynamics"] = {
           st.tabs = viewTabs(c, th, dx + 5, dy + 4, ["Needle", "Activity"], st.view || 0);
           txt(c, dx + dw - 8, dy + 15, `GR -${st.gr.toFixed(1)} dB`, { color: th.orange, align: "right" });
           c.fillStyle = th.dline; c.fillRect(dx, dy + 22, dw, 1);
-          if ((st.view || 0) === 0) grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
-          else activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
+          hint(dx + dw - 70, dy + 4, 66, 14, "Gain Reduction", "How much the effect turns the level down right now, in dB. Measured from the input and output levels.");
+          if ((st.view || 0) === 0) {
+            grNeedle(c, th, dx + 30, dy + 23, dw - 60, dh - 23, st.gr);
+            hint(dx, dy + 23, dw, dh - 23, "Gain Reduction Needle", "Shows how many dB the effect takes away, like the meter of Glue Compressor. 0 = no change. Measured from the input and output levels.");
+            legend(c, th, dx + 6, dy + dh - 5, [[th.cyan, "Gain reduction", "Needle: dB the effect takes away now."]], { line: true });
+          } else {
+            activity(c, th, dx, dy + 23, dw, dh - 23, st.hist);
+            hint(dx, dy + 23, dw, dh - 23, "Activity", "The last seconds, newest on the right: the input level in grey and the gain reduction in orange, like the display of Compressor.");
+            legend(c, th, dx + 6, dy + dh - 5, [[S.theme === "light" ? "#5e5e5e" : "#5a5a5a", "Input", "Input level over time."],
+                                               [th.orange, "Gain reduction", "dB taken away over time; lower = more reduction."]]);
+          }
           const first = ps.slice(0, 4);
           rr(c, dx, dy + dh + 4, dw, DEVICE_H - dh - 16, 3, th.panel);
           first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, dy + dh + 6, 74, p, vals[p._i], true));

@@ -42,6 +42,32 @@ async function buildDevices() {
   b.disabled = false; b.textContent = "Build devices";
 }
 
+// the final device of a category: its views from final.json, composed when there are several
+function finalOpt(cat) {
+  const D = DESIGNS[cat], ids = (S.final || {})[cat];
+  if (!D || !ids || !ids.length) return null;
+  if (ids.length === 1) return Object.assign({}, D.options.find(o => o.id === ids[0]));
+  return composeViews(D, ids);
+}
+
+// Info View: like Live's, bottom left; filled from the hints the drawing registered
+function showInfo(h) {
+  let el = document.getElementById("infoview");
+  if (!el) {
+    el = document.createElement("div"); el.id = "infoview";
+    el.style.cssText = "position:fixed;left:12px;bottom:12px;width:300px;max-width:calc(100vw - 24px);background:#2b2b2b;border:1px solid #454545;border-radius:3px;padding:8px 10px;font-size:12px;line-height:1.4;color:#d0d0d0;z-index:20;pointer-events:none;box-shadow:0 2px 10px #0008";
+    document.body.appendChild(el);
+  }
+  if (!h) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.innerHTML = `<div style="font-weight:700;color:#fff;margin-bottom:2px">${h.title}</div>${h.text || ""}`;
+}
+function hintAt(m, x, y) {
+  let best = null;
+  for (const h of m.hints || []) if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
+  return best;
+}
+
 function renderPage() {
   if (S.cat === "All") { S.mocks = []; return renderAll(); }
   const cat = S.cat, page = document.getElementById("page"), D = DESIGNS[cat];
@@ -60,6 +86,11 @@ function renderPage() {
     ${cur}
     <h4>Options</h4>
     ${S.signal === "real" ? `<p class="lead" style="margin:0">Real audio: Airwindows ${D.effect} on a drum loop, measured exactly as the device measures it. The displays show what each option would show in Live.</p>` : ""}
+    ${finalOpt(cat) ? `<div class="opt chosen" data-id="FINAL">
+        <div class="top"><b>Final device</b><span class="why">What the device will be: views ${(S.final[cat] || []).join(", ")}${(S.final[cat] || []).length > 1 ? " — switch with the View buttons at the top of the Input/Output column" : ""}. Hover (or tap) any part for its Info View text.</span></div>
+        <div class="scroll"><canvas data-id="FINAL"></canvas></div>
+        <div class="ctl"><label>Preview effect <select data-id="FINAL">${S.byCat[cat].map(e => `<option ${e.name === D.effect ? "selected" : ""}>${e.name}</option>`).join("")}</select></label></div>
+      </div><h4>All options</h4>` : ""}
     ${D.options.map(o => `
       <div class="opt ${dec.option === o.id ? "chosen" : ""}" data-id="${o.id}">
         <div class="top"><b>${o.id} — ${o.name}</b><span class="why">${o.why}</span></div>
@@ -74,22 +105,27 @@ function renderPage() {
     <textarea id="notes" placeholder="What to change, mix-and-match (e.g. 'A, but with C's meters'), colours, sizes…">${dec.notes || ""}</textarea>
     <div style="margin-top:8px"><button class="btn" id="saveNotes">Save notes</button><span class="saved" id="saved"></span></div>`;
 
-  D.options.forEach(o => {
-    const canvas = page.querySelector(`canvas[data-id="${o.id}"]`);
-    const sel = page.querySelector(`select[data-id="${o.id}"]`);
+  const fo = finalOpt(cat);
+  (fo ? [Object.assign(fo, { _key: "FINAL" })] : []).concat(D.options).forEach(o => {
+    const key = o._key || o.id;
+    const canvas = page.querySelector(`canvas[data-id="${key}"]`);
+    const sel = page.querySelector(`select[data-id="${key}"]`);
     const mock = { o, canvas, st: newState(), eff: S.reg.find(e => e.name === D.effect) };
     // pre-roll 5 s of signal so histories and meters are full on the first frame
     mock.fi = 0; mock.acc = 0;
-    if (S.signal === "real") loadFrames(cat).then(fr => { if (fr) for (let k = 0; k < 150; k++) feedReal(mock, fr, 1 / 30); });
+    if (S.signal === "real") loadFrames(cat).then(fr => { if (fr) for (let k = 0; k < 600; k++) feedReal(mock, fr, 1 / 30); });
     else for (let k = 0; k < 600; k++) { mock.st.t += 1 / 120; o.step(mock.st, 1 / 120); }
     sel.onchange = () => { mock.eff = S.reg.find(e => e.name === sel.value); };
     // options may handle clicks (e.g. view buttons): o.click(x, y, st) in device pixels
+    const pos = ev => { const r = canvas.getBoundingClientRect(); return [(ev.clientX - r.left) / S.zoom, (ev.clientY - r.top) / S.zoom]; };
     canvas.onclick = ev => {
-      if (!o.click) return;
-      const r = canvas.getBoundingClientRect();
-      o.click((ev.clientX - r.left) / S.zoom, (ev.clientY - r.top) / S.zoom, mock.st);
+      const [x, y] = pos(ev);
+      showInfo(hintAt(mock, x, y));            // tap on a phone shows the Info View text
+      if (o.click) o.click(x, y, mock.st);
     };
-    if (o.click) canvas.style.cursor = "pointer";
+    canvas.onmousemove = ev => { const [x, y] = pos(ev); showInfo(hintAt(mock, x, y)); };
+    canvas.onmouseleave = () => showInfo(null);
+    canvas.style.cursor = o.click ? "pointer" : "help";
     S.mocks.push(mock);
   });
   page.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => save({ option: b.dataset.approve }));
@@ -144,16 +180,18 @@ function frame(now) {
     S.effWhat = m.eff ? m.eff.what : "";
     const ps = (m.eff ? m.eff.params : []).map((p, i) => ({ ...p, _i: i }));
     const vals = ps.map(p => p.default);
+    S.hints = [];
     header(c, th, W, `Airwindows ${S.cat}`);
     m.o.draw(c, th, m.st, ps, vals);
+    m.hints = S.hints;
   }
   requestAnimationFrame(frame);
 }
 
 // ---------------------------------------------------------------- init
 async function init() {
-  [S.themes, S.reg, S.decisions] = await Promise.all(
-    ["themes.json", "registry.json", "/api/decisions"].map(u => fetch(u).then(r => r.json())));
+  [S.themes, S.reg, S.decisions, S.final] = await Promise.all(
+    ["themes.json", "registry.json", "/api/decisions", "final.json"].map(u => fetch(u).then(r => r.ok ? r.json() : {})));
   S.reg.forEach(e => (S.byCat[e.category] = S.byCat[e.category] || []).push(e));
   // load designs/<Category>.js for every category that has one (missing files are skipped)
   await Promise.all(categories().map(c => new Promise(res => {

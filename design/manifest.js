@@ -19,17 +19,21 @@ for (const f of fs.readdirSync(path.join(D, "designs")).filter(f => f.endsWith("
   const cat = f.slice(0, -3);
   vm.runInContext(fs.readFileSync(path.join(D, "designs", f), "utf8"), ctx, { filename: f });
   const des = vm.runInContext(`DESIGNS[${JSON.stringify(cat)}]`, ctx);
-  const o = des.options.find(x => x.id === choice[cat]) || des.options[0];
+  const ids = String(choice[cat] || des.options[0].id).split("+");
+  const o = ids.length > 1 ? vm.runInContext("composeViews", ctx)(des, ids) : (des.options.find(x => x.id === ids[0]) || des.options[0]);
   const tabs = [];
   vm.runInContext("S.cat = c; S.theme = 'dark';", Object.assign(ctx, { c: cat }));
-  const realTabs = vm.runInContext("viewTabs", ctx);
+  const realTabs = vm.runInContext("viewTabs", ctx), realTabsV = vm.runInContext("viewTabsV", ctx);
+  let vertical = false;
+  ctx.__vert = () => { vertical = true; };
   vm.runInContext("viewTabs = function (c, th, x, y, labels) { labels.forEach(l => __tabs.push(String(l))); return []; };", Object.assign(ctx, { __tabs: tabs }));
+  vm.runInContext("viewTabsV = function (c, th, x, y, w, labels) { __vert(); labels.forEach(l => __tabs.push(String(l))); };", ctx);
   const eff = vm.runInContext(`S.byCat[${JSON.stringify(cat)}]`, ctx).find(e => e.name === des.effect);
   const st = vm.runInContext("newState()", ctx);
   for (let k = 0; k < 10; k++) { st.t += 1 / 60; o.step(st, 1 / 60); }
   const ps = eff.params.map((p, i) => ({ ...p, _i: i }));
   o.draw(fake, vm.runInContext("tok()", ctx), st, ps, ps.map(p => p.default));
-  ctx.__real = realTabs; vm.runInContext("viewTabs = __real;", ctx);
-  out[cat] = { option: o.id, width: o.width, tabs, effect: des.effect };
+  ctx.__real = realTabs; ctx.__realV = realTabsV; vm.runInContext("viewTabs = __real; viewTabsV = __realV;", ctx);
+  out[cat] = { option: o.id, width: o.width, tabs, vertical, effect: des.effect };
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");

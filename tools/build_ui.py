@@ -32,9 +32,11 @@ def main():
     a = ap.parse_args()
 
     decisions = json.loads(Path(a.decisions).read_text()) if Path(a.decisions).exists() else {}
+    final_path = DESIGN / "final.json"
+    final = json.loads(final_path.read_text()) if final_path.exists() else {}
     for c in a.choose:
         cat, opt = c.split("=", 1)
-        decisions.setdefault(cat, {})["option"] = opt
+        final[cat] = opt.split("+")
     themes = json.loads((DESIGN / "themes.json").read_text())
     lib = (DESIGN / "lib.js").read_text()
     mgc = (DESIGN / "mgcanvas.js").read_text().replace(
@@ -49,11 +51,14 @@ def main():
             continue
         src = f.read_text()
         ids = option_ids(src)
-        chosen = decisions.get(cat, {}).get("option") or ids[0]
-        if chosen not in ids:
-            raise SystemExit(f"{cat}: approved option {chosen!r} not in {ids}")
+        # views: design/final.json, else the approved option, else the first option
+        views = final.get(cat) or [decisions.get(cat, {}).get("option") or ids[0]]
+        bad = [v for v in views if v not in ids]
+        if bad:
+            raise SystemExit(f"{cat}: views {bad} not in {ids}")
+        chosen = "+".join(views)
         rt = (runtime.replace("__CATEGORY__", json.dumps(cat))
-                     .replace("__OPTION__", json.dumps(chosen))
+                     .replace("__VIEWS__", json.dumps(views))
                      .replace("__THEMES__", json.dumps(themes))
                      .replace("__LOG__", json.dumps(a.log)))
         body = "\n".join([
@@ -61,7 +66,7 @@ def main():
             lib, mgc, src, rt])
         (OUT / f"aw_ui_{cat}.js").write_text(body)
         chosen_all[cat] = chosen
-        print(f"{cat}: option {chosen}{'' if cat in decisions else ' (not approved yet: first option)'}")
+        print(f"{cat}: views {chosen}")
 
     man = json.loads(subprocess.run(["node", str(DESIGN / "manifest.js"), json.dumps(chosen_all)],
                                     check=True, capture_output=True, text=True).stdout)
