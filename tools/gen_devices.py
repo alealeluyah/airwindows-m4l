@@ -37,6 +37,7 @@ DIM = [1.0, 1.0, 1.0, 0.46]   # secondary text colour Ableton uses on dark panel
 LOG_PATH = ""       # set with --log to make the device JavaScript write a debug log
 TEST_SIGNAL = False # --test-signal: built-in noise bursts, silent output (bench test in Max)
 UI = {}             # per category: chosen design option, width, view tabs (javascript/aw_ui_manifest.json)
+DEFAULTS = {}       # effect name -> default value of each control (from the registry)
 
 CODE = r"""
 inlets = 4;
@@ -49,6 +50,7 @@ setoutletassist(0, "to airwin~");
 setoutletassist(1, "to thispatcher");
 
 const NAMES = __NAMES__;
+const DEFAULTS = __DEFAULTS__;   // effect name -> default value of each control (0..1)
 const NSLOT = __NSLOT__;
 const G = __GEOMETRY__;
 const LOG = __LOG__;
@@ -72,10 +74,18 @@ function menuIndex() {
     return NAMES[idx] !== undefined ? idx : 0;
 }
 
+// Live resets a dial to its initial value on double-click; the slots are shared by all
+// effects, so their initial values follow the chosen effect's defaults.
+function initials(name) {
+    const d = DEFAULTS[name] || [];
+    for (let k = 0; k < NSLOT; k++) script("sendbox", "dial" + k, "_parameter_initial", d[k] !== undefined ? d[k] : 0);
+}
+
 function msg_int(i) {
     if (inlet !== 1) return;
     const name = NAMES[i];
     if (name === undefined) return;
+    initials(name);
     // while Live restores a set, keep the parameter values it is about to restore
     outlet(0, ready ? "algo" : "algokeep", name);
 }
@@ -85,6 +95,7 @@ function msg_int(i) {
 function refresh() {
     const idx = menuIndex();
     log("refresh", idx, NAMES[idx]);
+    initials(NAMES[idx]);
     outlet(0, "algokeep", NAMES[idx]);
     // From now on a menu change is the user's (or a restore, which Live does menu-first
     // because of parameter_order), so it loads the effect's defaults.
@@ -177,6 +188,7 @@ def label(p, varname, prect, text="", just=1, color=None):
 
 def build(category, names):
     p = Patch()
+    first_defaults = DEFAULTS[names[0]]
     aw = p.newobj("airwin~", [20, 300, 80, 22], 2, 3, ["signal", "signal", ""])
     if TEST_SIGNAL:
         # bench test in Max: noise bursts at 4 Hz in, silent output, audio on at load
@@ -243,6 +255,7 @@ def build(category, names):
     geometry = {"cols": COLS, "slotW": SLOT_W, "gridX": GRID_X, "gridW": GRID_W, "h": DEVICE_H,
                 "nameH": 14, "dialH": 39, "valueH": 14, "rowGap": 6}
     code = (CODE.replace("__NAMES__", json.dumps(names)).replace("__NSLOT__", str(NSLOT))
+            .replace("__DEFAULTS__", json.dumps({n: DEFAULTS[n] for n in names}))
             .replace("__GEOMETRY__", json.dumps(geometry)).replace("__LOG__", json.dumps(LOG_PATH)))
     ctrl = p.box("v8.codebox", [200, 120, 400, 140], code=code, filename="none",
                  numinlets=4, numoutlets=2, outlettype=["", ""],
@@ -324,7 +337,8 @@ def build(category, names):
                      saved_attribute_attributes={"valueof": {
                          "parameter_longname": long, "parameter_shortname": f"P{k + 1}",
                          "parameter_type": 0, "parameter_mmin": 0.0, "parameter_mmax": 1.0,
-                         "parameter_initial_enable": 0, "parameter_unitstyle": 1,
+                         "parameter_initial_enable": 1, "parameter_unitstyle": 1,
+                         "parameter_initial": [first_defaults[k] if k < len(first_defaults) else 0.0],
                          "parameter_linknames": 0, "parameter_modmode": 3,
                          "parameter_order": 1}})
         p.params[dial] = [long, f"P{k + 1}", 1]
@@ -395,6 +409,8 @@ def main():
     UI = json.loads(man.read_text())
 
     reg = json.load(open(a.registry))
+    global DEFAULTS
+    DEFAULTS = {e["name"]: [round(float(q.get("default", 0)), 6) for q in e["params"]] for e in reg}
     assert max(len(e["params"]) for e in reg) <= NSLOT, "an effect has more parameters than slots"
     cats = {}
     for e in reg:
