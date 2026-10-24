@@ -132,6 +132,9 @@ function pvalue(i, v) { script("sendbox", "dial" + i, "set", v); }
 function what(s) { script("sendbox", "what", "set", ...String(s).split(" ")); }
 function algo(s) {}
 function category(s) {}
+// airwin~ also sends the display's measurements (levels, peaks, spec_*, scope, ...) here:
+// they are for the v8ui, so ignore them instead of printing "no function" 30 times a second
+function anything() {}
 
 // also run once shortly after compiling, for hosts where neither signal arrives
 const startup = new Task(startOnce);
@@ -262,8 +265,8 @@ def build(category, names):
     p.line(thisdev, 0, meter, 0)
     p.line(meter, 0, aw, 0)
 
-    # Live theme: every theme colour (live.colors getall), again when the theme changes
-    colq = p.box("message", [600, 260, 100, 22], text="getall", numinlets=2, numoutlets=1, outlettype=[""])
+    # Live theme: every theme colour (live.colors everything), again when the theme changes
+    colq = p.box("message", [600, 260, 100, 22], text="everything", numinlets=2, numoutlets=1, outlettype=[""])
     colors = p.newobj("live.colors", [600, 290, 70, 22], 1, 2, ["", "bang"])
     p.line(lb, 0, colq, 0)
     p.line(thisdev, 0, colq, 0)
