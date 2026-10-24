@@ -33,3 +33,6 @@ endif()
 
 add_subdirectory(source/projects/airwin_tilde)
 add_subdirectory(tools/awtool)
+if (APPLE)
+    add_subdirectory(tools/nulltest)
+endif()
