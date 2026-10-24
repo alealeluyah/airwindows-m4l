@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -873,19 +853,12 @@ function makeCanvas(mg, opts) {
     clipTo(c, cx - R, cy - R, 2 * R, 2 * R);
     const dot = (L, Rr, col, a) => { c.globalAlpha = a; c.fillStyle = col;
       for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, s = (L[n] - Rr[n]) * 0.5; c.fillRect(cx + s * R * 1.3 - 0.75, cy - m * R * 1.3 - 0.75, 1.5, 1.5); } c.globalAlpha = 1; };
-    // one zoom for input and output (RUBRIC 2.6): the farthest point from the centre fills ~90 % of the scope
-    let pkV = 0;
-    [[st.iL, st.iR], [st.oL, st.oR]].forEach(([L, Rr]) => { for (let n = 0; n < L.length; n++) pkV = Math.max(pkV, Math.abs(L[n] + Rr[n]) * 0.75, Math.abs(L[n] - Rr[n]) * 2.5); });
-    const g = fit(st, "vec", pkV);
+    // fixed scale (RUBRIC 2.6): same fixed scale for input and output, never computed from the signal
     const trail = (L, Rr, col, lw, al) => { c.globalAlpha = al; c.strokeStyle = col; c.lineWidth = lw; c.lineJoin = "round"; c.beginPath();
-      for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, sd = (L[n] - Rr[n]) * 0.5, X = cx + sd * R * 5 * g, Y = cy - m * R * 1.5 * g; n ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+      for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, sd = (L[n] - Rr[n]) * 0.5, X = cx + sd * R * 5, Y = cy - m * R * 1.5; n ? c.lineTo(X, Y) : c.moveTo(X, Y); }
       c.stroke(); c.globalAlpha = 1; };
     trail(st.iL, st.iR, th.scale, 1, 0.7); trail(st.oL, st.oR, th.cyan, 1.5, 1);
     c.restore();
-    if (g > 1.05) {
-      txt(c, P.x + 86, P.y + P.h - 4, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
-      hint(P.x + 84, P.y + P.h - 13, 62, 11, "Zoom", "The stereo picture is enlarged so the farthest point fills the scope. The number says by how much; quiet signals get a larger zoom.");
-    }
     hint(cx - R, cy - R, 2 * R, 2 * R, "Vectorscope Plot", "A tall, thin trace means mono. A wide, round cloud means wide stereo. A trace along the L or R line means one channel only. Measured from the left and right samples.");
     // bars on the right of the scope
     const x0 = P.px + sz + 14, w0 = P.x + P.w - x0 - 8;

@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -874,16 +854,9 @@ function makeCanvas(mg, opts) {
   const floorOf = vals => -78 + 48 * mean(vals);           // dBFS peak level of the added noise
   const shape = (f, m) => (m - 0.5) * 6 * l2(f / 1000);   // dB tilt across frequency
   const NAME = "DeNoise";
-  // RUBRIC 2.6 for tiny signals: fit() zooms 1x..32x, so a decade scale S = 10^n first brings the
-  // peak into that range. Returns the total gain (fit * S). Hysteresis keeps S from flickering.
-  function fit10(h, key, pk) {
-    const fk = "_fit_" + key, sk = "_s_" + key;
-    let S = h[sk] || 1;
-    while (pk * S > 1.2 && S > 1) { S /= 10; if (h[fk]) h[fk] = Math.min(32, h[fk] * 10); }
-    while (pk * S < 0.03 && S < 1e8) { S *= 10; if (h[fk]) h[fk] = Math.max(1, h[fk] / 10); }
-    h[sk] = S;
-    return fit(h, key, pk * S) * S;
-  }
+  // RUBRIC 2.6, tiny signal: the difference scope uses ONE fixed magnification, chosen for typical
+  // noise (peaks around -48 dBFS reach full height). Never computed from the signal.
+  const DIFF_MAG = 256;
   function stepN(st, dt) {
     const d = base(st, dt); specStep(st, dt, d);
     if (st.rms === undefined) { st.rms = 0; st.cols = []; st.colT = 0; for (let q = 80; q > 0; q--) st.cols.push({ e: drums(Math.max(0, st.t - q / 25)).env, j: Array.from({ length: 24 }, (_, r) => noise((Math.floor(st.t * 25) - q) * 3.7 + r * 11.3)) }); }
@@ -907,7 +880,7 @@ function makeCanvas(mg, opts) {
     refs: [["EQEightL12.png", "EQ Eight (spectrum)"], ["AutoFilterL12.png", "Auto Filter"], ["SaturatorL12.png", "Saturator"]],
     lead: "Visual cue: how much noise the effect adds or removes, measured live as the difference between output and input (level and spectrum).",
     options: [
-      { id: "A", name: "Zoom scope", short: "Zoom", width: 588, step: stepN,
+      { id: "A", name: "Magnified scope", short: "Magnified", width: 588, step: stepN,
         live(st, m, dt) {
           st.lv = 1; lvIO(st, m, dt); lvNoise(st, m, dt);
           const iL = Array.isArray(m.inScopeL) ? m.inScopeL : [], iR = Array.isArray(m.inScopeR) ? m.inScopeR : iL;
@@ -928,10 +901,10 @@ function makeCanvas(mg, opts) {
           const mx = Math.max(1, ...cnt);
           for (let i = 0; i < 13; i++) h[i] += (cnt[i] / mx - h[i]) * 0.4;
         },
-        why: "A very zoomed waveform that makes the noise visible sample by sample, with a noise-floor readout.",
-        bullets: ["Cyan steps = difference samples (output minus input, 64 recent samples), auto-zoomed; orange lines mark the measured noise RMS. The grey input line is dropped in live mode: the signal is far bigger than the noise, so it cannot share the zoomed scale",
+        why: "A waveform at a fixed, large magnification that makes the noise visible sample by sample, with a noise-floor readout.",
+        bullets: ["Cyan steps = difference samples (output minus input, 64 recent samples) at a fixed magnification (×256); orange lines mark the measured noise RMS. The grey input line is dropped in live mode: the signal is far bigger than the noise, so it cannot share the magnified scale",
           "Histogram of the difference samples and a big noise-floor readout with effective bits",
-          "Driven by the audio: RMS level of (output minus input), auto-zoomed to that level"],
+          "Driven by the audio: RMS level of (output minus input), shown at the fixed ×256 magnification"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 588 - GAIN_W - 4, st);
           const fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl; const k = Math.floor(st.t * 20);
@@ -941,10 +914,9 @@ function makeCanvas(mg, opts) {
           strip(c, th, px, py + 107, pw, ph - 107, true);
           const sx = px + 8, sw = 190, sy = py + 23, sh = 76, mid = sy + sh / 2, NS = lv ? 64 : 40, stp = sw / NS;
           const rmsN = lv ? Math.pow(10, lvF(st.nz, -120) / 20) : nA * 0.41;
-          // auto zoom of the difference samples (RUBRIC 2.6); the plot is centred on 0
-          const G = fit10(st, "dz", lv ? Math.max(st.dpk0 || 0, rmsN * 1.5, 1e-7) : 5 * nA);
-          txt(c, px + 8, sb, zoomText(G), { color: th.dispText, size: 8.5, align: "left" });
-          hint(px + 6, py + 4, 60, 12, "Zoom", "The noise is enlarged so its loudest recent sample fills the scope. The number says by how much; a quieter noise gets a larger zoom.");
+          // fixed magnification of the difference samples (RUBRIC 2.6); the plot is centred on 0
+          const G = DIFF_MAG;
+          txt(c, px + 8, sb, "\u00d7" + DIFF_MAG, { color: th.dispText, size: 8.5, align: "left" });
           rr(c, sx, sy, sw, sh, 0, th.meterBg);
           const Y = v => mid - clamp(v * G, -1, 1) * sh / 2;
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
@@ -970,7 +942,7 @@ function makeCanvas(mg, opts) {
           legend(c, th, px + 70, sb, (lv ? [] : [[th.dispText, "In", "Grey line: the clean input signal, drawn as a reference."]]).concat([
             [th.cyan, "Out - in", "Cyan steps: output minus input, sample by sample. This is the noise."],
             [th.orange, "RMS", "Orange lines: the average size (RMS) of the noise, drawn above and below zero."]]));
-          hint(sx, sy, sw, sh, "Difference Scope", "A very zoomed view of output minus input, one step per sample. If the effect adds no noise, the line is flat in the middle. Zoom adjusts to the noise level.");
+          hint(sx, sy, sw, sh, "Difference Scope", "A view of output minus input at a fixed magnification of ×256 (not adjusted to the signal), one step per sample. If the effect adds no noise, the line is flat in the middle.");
           hint(sx, Y(rmsN) - 4, sw, 8, "RMS Line (Upper)", "The average size (RMS) of the noise. Measured from output minus input.");
           hint(sx, Y(-rmsN) - 4, sw, 8, "RMS Line (Lower)", "The same RMS level on the negative side of zero.");
           // histogram of difference samples

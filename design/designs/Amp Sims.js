@@ -128,7 +128,7 @@
     liveGain(st, m, dt);
     const inPk = fnum(m.inPk, 0), outPk = fnum(m.outPk, 0);
     st.A = Math.max(inPk, fnum(st.A, 0) * lin(-24 * dt)); st.outA = Math.max(outPk, fnum(st.outA, 0) * lin(-24 * dt));
-    st.R = Math.max(0.05, Math.max(inPk, outPk) * 1.1, fnum(st.R, 0) * lin(-6 * dt));      // plot half-range, slow release
+    st.R = 1;                                                    // plot half-range: fixed, full scale
     // transfer curve: 32 bins of mean output per input amplitude; a bin without data keeps its last value
     if (!st.xs) st.xs = new Array(32).fill(null);
     if (hasN(m.xfer, 32)) for (let j = 0; j < 32; j++) { const v = m.xfer[j]; if (Number.isFinite(v) && v > -8) st.xs[j] = st.xs[j] === null ? v : st.xs[j] + (v - st.xs[j]) * 0.4; }
@@ -136,10 +136,8 @@
     // scatter of the latest input/output sample pairs
     const si = mono(m.inScopeL, m.inScopeR), so = mono(m.scopeL, m.scopeR);
     st.dots = si.map((u, i) => [0.5 + u / (2 * st.R), 0.5 - so[i] / (2 * st.R)]);
-    // waveform window for the scope (option C), auto-scaled with a slow peak hold
+    // waveform window for the scope (option C), fixed scale
     st.sc = { i: si, o: so };
-    st.scPk = Math.max(0.02, Math.max(...si.map(Math.abs), ...so.map(Math.abs)), fnum(st.scPk, 0) * lin(-6 * dt));
-    st.scFull = st.scPk * 1.15;
     liveHarm(st, m, dt);
     st.crIn += (crest(inPk, m.inRmsDb) - st.crIn) * 0.2; st.crOut += (crest(outPk, m.outRmsDb) - st.crOut) * 0.2;
     st.dDb = rel(st.dDb, m.diffRmsDb, dt); st.dRms = lin(st.dDb);
@@ -173,7 +171,7 @@
     options: [
       { id: "A", name: "Transfer curve", short: "Curve", width: 632, step, live: liveInit,
         why: "A big measured in-versus-out curve plus harmonic bars show how hard the amp bends the signal — like Saturator.",
-        bullets: ["Measured: output level plotted against input level (curve bends when the amp saturates), teal band = current input range; real audio zooms the plot to the signal level and adds the latest in/out sample pairs as cyan dots",
+        bullets: ["Measured: output level plotted against input level (curve bends when the amp saturates), teal band = current input range; real audio adds the latest in/out sample pairs as cyan dots",
                   "Measured: size of harmonics 1–10 (simulated: DFT of the output; real audio: energy the amp added at multiples of the strongest low band, so tone changes also count), with THD readout",
                   "Menu, arrows and all dials at the right"],
         draw(c, th, st, ps, vals) {
@@ -185,7 +183,7 @@
           strip(c, th, x0, y0 + H - 16, w0, 16, true);
           const px = x0 + 6, py = y0 + 21, pw = w0 - 12, ph = H - 21 - 19;
           c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
-          if (st.live) {                       // real audio: plot range follows the signal (+-R), so the curve fills the box
+          if (st.live) {                       // real audio: plot range is fixed (+-R = full scale)
             const hb = pw * st.A / (2 * st.R);
             c.fillStyle = th.cyan + "33"; c.fillRect(px + pw / 2 - hb, py, 2 * hb, ph);
             c.fillStyle = th.dline; c.fillRect(px, py + ph / 2, pw, 1); c.fillRect(px + pw / 2, py, 1, ph);
@@ -208,7 +206,7 @@
                       [th.orange, "Out", "The orange curve is the output level for each input level. A straight line means the amp changes nothing; a bend means it squashes or boosts."],
                       [th.scale, "Even", "The grey diagonal is the no-change line, where the output equals the input. Where the orange curve leaves it, the amp adds distortion."]];
           legend(c, th, x0 + w0 - 6 - lgW(c, tl), y0 + 12, tl);
-          hint(px, py, pw, ph, "Transfer Curve", `Output level against input level, measured from the input and output audio.${st.live ? ` The plot edge is ${db(st.R).toFixed(0)} dBFS and follows the signal.` : ""} The farther the orange curve bends from the grey diagonal, the more the amp distorts.`);
+          hint(px, py, pw, ph, "Transfer Curve", `Output level against input level, measured from the input and output audio.${st.live ? ` The plot edge is full scale, 0 dBFS.` : ""} The farther the orange curve bends from the grey diagonal, the more the amp distorts.`);
           ltxt(c, x0 + 6, y0 + H - 5, `In ${db(st.A).toFixed(1)} dB`, th.dispText, "Input Level Readout", "Peak level of the input signal now, in dB. Measured before the amp effect.");
           rtxt(c, x0 + w0 - 6, y0 + H - 5, `Out ${db(st.live ? st.outA : Math.abs(proc(st.A, st.drive, 0.25))).toFixed(1)} dB`, th.dispText, "Output Level Readout", "Peak level of the amp output now, in dB. Measured after the amp effect.");
 
@@ -257,13 +255,13 @@
         } },
 
       { id: "C", name: "Scope", short: "Scope", width: 632, step, live: liveInit,
-        why: "A zoomed oscilloscope lays the output over the input so flattened peaks show at once, with meters for the added signal — like Roar and Drum Buss.",
-        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms, auto-zoomed so the loudest point fills the plot (the strip shows the zoom)",
+        why: "An oscilloscope lays the output over the input so flattened peaks show at once, with meters for the added signal — like Roar and Drum Buss.",
+        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms, drawn at a fixed scale (full scale = plot edge)",
                   "Readouts: THD and crest factor in and out; meters for In, Out and the difference (added signal)",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
           const y0 = HEAD_H + 4, H = DEVICE_H - 8;
-          // screen: scope with legend + zoom in the top strip, THD and crest in the bottom strip
+          // screen: scope with legend in the top strip, THD and crest in the bottom strip
           const x = 4, w = 252;
           screen(c, th, x, y0, w, H);
           strip(c, th, x, y0, w, 18);
@@ -276,8 +274,8 @@
             const xi = st.A * Math.sin(TAU * (q / pw * 2.5 + st.t * 0.4));
             av.push(xi); bv.push(proc(xi, st.drive, 0.25));
           }
-          // one zoom for input and output (RUBRIC 2.6)
-          const g = fit(st, "scope", Math.max(...av.map(Math.abs), ...bv.map(Math.abs)));
+          // fixed scale, true level (RUBRIC 2.6)
+          const g = 1;
           av.forEach((v, i) => { a.push([px + i * 2, mid - v * g * hh]); b.push([px + i * 2, mid - bv[i] * g * hh]); });
           c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
           [-0.5, 0, 0.5].forEach(v => { c.fillStyle = th.dline; c.fillRect(px, Math.round(mid - v * hh), pw, 1); });
@@ -285,8 +283,6 @@
           c.restore();
           legend(c, th, x + 6, y0 + 12, [[th.cyan, "In", "The cyan wave is the signal going into the amp."], [th.orange, "Out", "The orange wave is the amp output. Flat tops on it mean the amp is clipping the peaks."]], { line: true });
           hint(px, py, pw, ph, "Scope Display", "Shape of the input and output waves over a few milliseconds. Measured from the input and output audio. The thin lines mark half of the plot height.");
-          txt(c, x + w - 6, y0 + 12, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
-          hint(x + w - 80, y0 + 2, 76, 14, "Zoom", "The waves are enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom, so they stay comparable.");
           ltxt(c, x + 6, y0 + H - 5, `THD ${st.thd.toFixed(1)} %   Crest ${st.crIn.toFixed(1)} → ${st.crOut.toFixed(1)} dB`, th.dispText, "THD and Crest Readout", "THD is how strong the added overtones are, in percent. Crest is the gap between peak and average level, input then output, in dB. A lower crest on the output means flattened peaks.");
           // tile: difference meter
           tile(c, th, 258, y0, 26, H);

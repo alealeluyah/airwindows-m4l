@@ -31,11 +31,8 @@
   }
   function clipTo(c, x, y, w, h) { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); }
   function dispHead(c, th, dx, dy, name) { menu(c, th, dx + 6, dy + 4, 100, name); arrows(c, th, dx + 110, dy + 4); }
-  // zoom tag in a screen strip (RUBRIC 2.6): text only when zoomed, hint always
-  function zoomTag(c, th, x, y, g) {
-    txt(c, x, y, zoomText(g), { color: th.dispText, align: "left", size: 8.5 });
-    hint(x - 2, y - 10, 70, 13, "Zoom", "The wave is enlarged so its loudest point fills the plot. The number says by how much; a quiet signal gets a larger zoom.");
-  }
+  // Fixed magnification of the lower "Added" lane (out - in is tiny for most material). Never computed from the signal.
+  const ADDED_MAG = 16;
   // loudest absolute value over the newest n samples of several arrays
   function absPeak(arrs, n) { let p = 0; for (const a of arrs) for (let i = Math.max(0, a.length - n); i < a.length; i++) p = Math.max(p, Math.abs(a[i])); return p; }
   function ctl(c, th, ps, area, cols, vals, cw) {
@@ -75,7 +72,7 @@
   const pkOf = a => Math.max(fin(a && a[0], -120), fin(a && a[1], -120));
   function liveTone(st, m, dt) {
     if (!st.lv) { st.lv = true; st.wi = []; st.wo = []; st.xf = Array(32).fill(null); st.hi = HK.map(() => -90); st.ho = HK.map(() => -90);
-      st.pk = 0; st.thd = 0; st.eo = 0; st.rI = -60; st.rO = -60; st.pI = -60; st.pO = -60; st.f0 = 14; st.dg = 1; st.rpk = 0.01; }
+      st.pk = 0; st.thd = 0; st.eo = 0; st.rI = -60; st.rO = -60; st.pI = -60; st.pO = -60; st.f0 = 14; }
     const sm = (p, v, k) => p + (fin(v, -120) - p) * k;
     // levels
     st.inL = Math.max(pkOf(m.inPkDb), (Number.isFinite(st.inL) ? st.inL : -60) - 24 * dt);
@@ -87,10 +84,6 @@
     const a = m.inScopeL || [], b = m.scopeL || [];
     if (a.length >= 16 && a.length === b.length) {
       st.wi = a.map(v => clamp(fin(v, 0), -1, 1)); st.wo = b.map(v => clamp(fin(v, 0), -1, 1));
-      let dp = 0; for (let i = 0; i < a.length; i++) dp = Math.max(dp, Math.abs(st.wo[i] - st.wi[i]));
-      st.rpk = Math.max(dp, st.rpk * 0.95);
-      const tg = clamp(Math.pow(2, Math.floor(Math.log2(0.8 / Math.max(st.rpk, 1e-4)))), 1, 128);
-      if (tg > st.dg * 1.9 || tg < st.dg * 0.9) st.dg = tg;
     }
     // measured transfer curve: mean output per input-amplitude bin, kept per bin
     const xf = m.xfer || [];
@@ -191,7 +184,7 @@
           txt(c, dx + dw - 8, dy + dh - 5, `Level ${st.ho[0].toFixed(1)} dB`, { color: th.dispText, align: "right" });
         } },
       { id: "C", name: "Waveform scope", short: "Scope", width: 548, step: stepTone, live: liveTone,
-        why: "A zoomed oscilloscope: input and output waves on top of each other, with the added part drawn below — you see the rounding and the extra edge directly.",
+        why: "An oscilloscope at a fixed scale: input and output waves on top of each other, with the added part drawn below at a fixed ×16 magnification — you see the rounding and the extra edge directly.",
         bullets: ["Driven by the raw input and output samples; lower trace = out − in", "RMS and crest factor (peak vs average) in and out as numbers", "Menu and arrows in the display strip, dials on the right"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
@@ -204,22 +197,23 @@
             [th.orange, "Added", "Orange wave in the lower strip: output minus input, which is what the effect adds to the sound."]], { line: true });
           hint(dx, dy, dw, dh, "Waveform Display", "Shows a few milliseconds of the sound as a wave. Measured from the input and output samples.");
           hint(dx + 8, dy + 25, dw - 16, 80, "Input And Output Waves", "Grey is the input wave, cyan is the output wave. If the cyan wave looks rounder or sharper than the grey one, the effect is adding colour.");
-          hint(dx + 8, dy + 109, dw - 16, 32, "Added Signal", "Output minus input, drawn larger so you can see it. A flat line means the effect adds nothing.");
+          hint(dx + 8, dy + 109, dw - 16, 32, "Added Signal", "Output minus input, drawn 16 times larger (a fixed magnification) so you can see it. A flat line means the effect adds nothing.");
           hint(dx + 8, dy + dh - 15, 140, 12, "RMS Readout", "Average level of the input, then of the output, in dB.");
           hint(dx + dw - 150, dy + dh - 15, 142, 12, "Crest Readout", "Peak level minus average level, input then output, in dB. A lower number means the peaks are rounder.");
           ctl(c, th, ps, { x: 366, y: HEAD_H + 4, w: 112, h: DEVICE_H - 8 }, 2, vals);
           const wx = dx + 8, ww = dw - 16, wy = dy + 26, wh = 78, ry = dy + 110, rh = 30;
           c.fillStyle = th.dline; c.fillRect(wx, wy + wh / 2, ww, 1); c.fillRect(wx, ry + rh / 2, ww, 1);
           strip(c, th, dx, dy + 106, dw, 0, true);
-          if (st.dg > 1) txt(c, wx + 2, ry + 8, `Added ×${st.dg}`, { color: th.scale, size: 8.5, align: "left" });
+          txt(c, wx + 2, ry + 8, `Added ×${ADDED_MAG}`, { color: th.scale, size: 8.5, align: "left" });
+          hint(wx, ry, 60, 12, "Added Magnification", "The added signal in the lower lane is always magnified 16 times. This is a fixed value, not set by the signal.");
           if (!st.wi || st.wi.length < 16) return;
-          const M = Math.min(80, st.wi.length), off = st.wi.length - M, dg = st.dg || 1;
-          // auto zoom (RUBRIC 2.6): input and output share one zoom so they stay comparable
-          const g = fit(st, "scope", absPeak([st.wi, st.wo], M)); zoomTag(c, th, dx + 148, dy + 15, g);
+          const M = Math.min(80, st.wi.length), off = st.wi.length - M, dg = ADDED_MAG;
+          // fixed scale (RUBRIC 2.6): true level, 1x, input and output on the same scale
+          const g = 1;
           [[st.wi, th.dispText, 1.3], [st.wo, th.cyan, 2]].forEach(([b, col, lw]) => {
             c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = wy + wh / 2 - b[off + i] * g * wh * 0.5; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
             c.strokeStyle = col; c.lineWidth = lw; c.stroke(); });
-          c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = ry + rh / 2 - (st.wo[off + i] - st.wi[off + i]) * rh * 0.9 * dg; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+          c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = ry + rh / 2 - clamp((st.wo[off + i] - st.wi[off + i]) * 0.9 * dg, -1, 1) * rh * 0.5; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
           c.strokeStyle = th.orange; c.lineWidth = 1.5; c.stroke();
           txt(c, dx + 8, dy + dh - 5, `RMS ${st.rI.toFixed(1)} → ${st.rO.toFixed(1)} dB`, { color: th.dispText, align: "left" });
           txt(c, dx + dw - 8, dy + dh - 5, `Crest ${(st.pI - st.rI).toFixed(1)} → ${(st.pO - st.rO).toFixed(1)} dB`, { color: th.dispText, align: "right" });

@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -791,7 +771,7 @@ function makeCanvas(mg, opts) {
   const dbF = a => Math.max(-120, dbl(a));
   function live(st, m, dt) {
     if (!st.lz) Object.assign(st, { lz: true, real: true, s: [], y: [], e: [], hist: new Float32Array(31), nd: -120, ndL: -120, ndR: -120, peak: 0,
-      spec: new Float32Array(NBD).fill(-120), dspec: new Float32Array(NBD).fill(-120), nh: [], lvl: -120, snrTxt: "", wsc: 0.05, inL: -60, outL: -60 });
+      spec: new Float32Array(NBD).fill(-120), dspec: new Float32Array(NBD).fill(-120), nh: [], lvl: -120, snrTxt: "", inL: -60, outL: -60 });
     st.inL = hold(st.inL, Math.max(fin(m.inPkDb[0], -120), fin(m.inPkDb[1], -120)), 24, dt);
     st.outL = hold(st.outL, Math.max(fin(m.outPkDb[0], -120), fin(m.outPkDb[1], -120)), 24, dt);
     st.lvl = fin(m.outRmsDb, -120);
@@ -802,8 +782,6 @@ function makeCanvas(mg, opts) {
     if (nS > 0) {
       st.s = Array.from(m.inScopeL.slice(0, nS), v => fin(v, 0)); st.y = Array.from(m.scopeL.slice(0, nS), v => fin(v, 0));
       st.e = st.y.map((v, i) => v - st.s[i]);
-      let pkS = 0; for (let i = 0; i < nS; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
-      st.wsc = Math.max(0.01, pkS, st.wsc * Math.exp(-dt / 0.7));
       for (let b = 0; b < 31; b++) st.hist[b] *= 0.97;
       let pk = 0;
       [["scopeL", "inScopeL", "ndL"], ["scopeR", "inScopeR", "ndR"]].forEach(([o, i, k]) => {
@@ -827,9 +805,8 @@ function makeCanvas(mg, opts) {
   // A, real: input and output scope on top, error (out - in) in 16-bit steps below
   function drawAReal(c, th, st, P) {
     const wh = Math.round(P.ph * 0.6), mid = P.py + wh / 2, n = st.s.length;
-    // one zoom for input and output (RUBRIC 2.6): the loudest visible point fills ~90 % of the scope
-    let pkS = 0; for (let i = 0; i < n; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
-    const g = fit(st, "waveA", pkS), sc = (wh / 2 - 3) * g;
+    // fixed scale, same for input and output: full scale = scope half-height (RUBRIC 2.6)
+    const sc = wh / 2 - 3;
     const ey = P.py + wh + 6, eh = P.ph - wh - 6, emid = ey + eh / 2, esc = (eh / 2 - 1) / 3;
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1; c.strokeStyle = th.scale; c.beginPath(); c.moveTo(P.px, mid); c.lineTo(P.px + P.pw, mid); c.stroke();
@@ -852,11 +829,10 @@ function makeCanvas(mg, opts) {
     }
     c.restore();
     legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output. In the error strip it shows out minus in."]], { line: true });
-    zoomNote(c, th, P, g);
-    hint(P.px, P.py, P.pw, wh, "Input And Output Waveform", "A short piece of the sound, zoomed in. Cyan is the input, orange is the output. Measured from the audio going in and out.");
+    hint(P.px, P.py, P.pw, wh, "Input And Output Waveform", "A short piece of the sound at true level, on a fixed scale. Cyan is the input, orange is the output. Measured from the audio going in and out.");
     hint(P.px, ey, P.pw, eh, "Error Trace", "Output minus input, in steps of the 16-bit grid. This is the rounding noise and dither the effect adds.");
-    hint(P.px + 2, P.py + 1, 120, 10, "Full Height Label", "The level that reaches the top of the scope, in dBFS. It follows the signal.");
-    txt(c, P.px + 2, P.py + 9, `full height = ${dbl(1 / g).toFixed(0)} dBFS`, { color: th.scale, size: 8.5, align: "left" });
+    hint(P.px + 2, P.py + 1, 120, 10, "Full Height Label", "The level that reaches the top of the scope, in dBFS. It is fixed at 0 dBFS (full scale).");
+    txt(c, P.px + 2, P.py + 9, "full height = 0 dBFS", { color: th.scale, size: 8.5, align: "left" });
     txt(c, P.px + 2, ey + 8, "Error (out - in), 16-bit steps", { color: th.dispText, size: 8.5, align: "left" });
     sameNote(c, th, st, P.px + P.pw - 4, ey + 8);
     txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 2 steps", { color: th.scale, size: 8.5, align: "right" });
@@ -960,30 +936,23 @@ function makeCanvas(mg, opts) {
     });
     return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
-  // zoom readout in the bottom strip (RUBRIC 2.6)
-  const zoomNote = (c, th, P, g) => {
-    if (g <= 1.05) return;
-    txt(c, P.x + 86, P.y + P.h - 4, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
-    hint(P.x + 84, P.y + P.h - 13, 62, 11, "Zoom", "The waveform is enlarged so the loudest part fills the scope. The number says by how much; quiet signals get a larger zoom.");
-  };
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const fm = v => (v >= 0 ? "+" : "") + v.toFixed(1);
 
-  // ---------- A: zoomed waveform
+  // ---------- A: waveform on a fixed 16-bit-step scale
   function drawA(c, th, st, ps, vals) {
     const W = 600, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P = panel(c, th, W - dw - 8, st.real ? [["Noise", ndTxt(st), th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${(st.lvl === undefined ? -120 : st.lvl).toFixed(1)} dBFS`, th.cyan, "Signal Level", "The average (RMS) level of the output, in dBFS."]]
       : [["Noise", `${st.nd.toFixed(1)} dBFS`, th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${st.amp.toFixed(1)} LSB`, th.cyan, "Signal Level", "The size of the test tone, in 16-bit steps (LSB)."]],
-      "Zoomed Waveform", "Shows the input and the output zoomed in to single 16-bit steps, so you can see what dither adds.", 15);
+      "Waveform", "Shows the input and the output on a fixed scale of single 16-bit steps, so you can see what dither adds.", 15);
     if (!st.s) return;
     if (st.real) return drawAReal(c, th, st, P);
     const mid = P.py + P.ph / 2;
-    let pkS = 0; for (let i = 0; i < N; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
-    const g = fit(st, "waveA", pkS / 7), sc = P.ph / 14 * g;     // grid lines stay 1 LSB apart; the zoom moves them
+    const sc = P.ph / 14;     // fixed scale: the plot spans +-7 LSB, grid lines 1 LSB apart (RUBRIC 2.6)
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1;
-    for (let l = -Math.ceil(7 / g); l <= Math.ceil(7 / g); l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
+    for (let l = -7; l <= 7; l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
     c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
     for (let i = 0; i < N; i++) { const x = P.px + i / (N - 1) * P.pw, y = mid - st.s[i] * sc; i ? c.lineTo(x, y) : c.moveTo(x, y); }
     c.stroke();
@@ -993,8 +962,7 @@ function makeCanvas(mg, opts) {
     c.stroke(); c.restore();
     [-4, 0, 4].forEach(l => txt(c, P.px + 1, mid - l * sc - 2, l ? fm(l) : "0", { color: th.scale, size: 8.5, align: "left" }));
     legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output."]], { line: true });
-    zoomNote(c, th, P, g);
-    hint(P.px, P.py, P.pw, P.ph, "Input And Output Waveform", "A short piece of the sound, zoomed in to single 16-bit steps. Cyan is the input, orange is the output. Measured from the audio going in and out.");
+    hint(P.px, P.py, P.pw, P.ph, "Input And Output Waveform", "A short piece of the sound on a fixed scale of single 16-bit steps (plus or minus 7). Cyan is the input, orange is the output. Measured from the audio going in and out.");
     txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 1 LSB", { color: th.scale, size: 8.5, align: "right" });
     hint(P.x + P.w - 70, P.y + P.h - 13, 66, 10, "Grid Size", "Each grid line is 1 step (LSB) of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
   }
@@ -1072,10 +1040,10 @@ function makeCanvas(mg, opts) {
   DESIGNS["Dithers"] = {
     effect: "BuildATPDF",
     refs: [["SaturatorL12.png", "Saturator (waveform + curve display)"], ["EQEightL12.png", "EQ Eight (spectrum)"], ["UtilityL12.png", "Utility (meters)"]],
-    lead: "Visual cue: the tiny error a dither adds, measured as output minus input, shown as a zoomed waveform, a noise spectrum and a noise-floor meter.",
+    lead: "Visual cue: the tiny error a dither adds, measured as output minus input, shown as a waveform, a noise spectrum and a noise-floor meter.",
     options: [
-      { id: "A", name: "Zoomed waveform", short: "Waveform", width: 668, step, live,
-        why: "A very quiet sine zoomed to bit level: the input line in cyan, the stepped output in orange, like the waveform view of Saturator.",
+      { id: "A", name: "Waveform", short: "Waveform", width: 668, step, live,
+        why: "A very quiet sine drawn on a fixed scale of 16-bit steps: the input line in cyan, the stepped output in orange, like the waveform view of Saturator.",
         bullets: ["Input and output waveform, grid = 1 LSB step", "Readouts: noise floor (dBFS) and signal level", "Driven by the audio in and the audio out of the device",
           "Live: input and output scope (m.inScope/scope), error strip = out - in in 16-bit steps, Noise = diffRmsDb, Level = outRmsDb (dBFS)"],
         draw: wrap(drawA) },

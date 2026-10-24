@@ -212,8 +212,8 @@
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath();
           c.moveTo(bx + bs / 2, by); c.lineTo(bx + bs / 2, by + bs); c.moveTo(bx, by + bs / 2); c.lineTo(bx + bs, by + bs / 2);
           c.moveTo(bx, by + bs); c.lineTo(bx + bs, by); c.stroke();
-          const zz = lv ? st.xz || 1 : 1;
-          const X = x => bx + bs * (x / zz + 1) / 2, Y = y => by + bs * (1 - (clamp(y / zz, -1, 1) + 1) / 2);
+          // fixed scale: the plot edge is always full scale (RUBRIC 2.6)
+          const X = x => bx + bs * (x + 1) / 2, Y = y => by + bs * (1 - (clamp(y, -1, 1) + 1) / 2);
           if (lv) {
             // measured curve (cyan; orange where it was updated just now) and the live in/out sample pairs
             const xf = st.xf || [], age = st.xa || [];
@@ -233,9 +233,7 @@
             dots.forEach(([x, y], i) => { c.globalAlpha = i === dots.length - 1 ? 1 : 0.35; c.beginPath(); c.arc(X(x), Y(y), i === dots.length - 1 ? 2.5 : 1.2, 0, Math.PI * 2); c.fill(); });
             c.globalAlpha = 1;
             if (dots.length) { const [lx, ly] = dots[dots.length - 1]; hint(X(lx) - 5, Y(ly) - 5, 10, 10, "Live Dot", "The newest pair of input and output levels. It moves along the curve as the signal plays."); }
-            hint(bx + bs - 40, py + 123, 40, 12, "Curve Zoom", "The input and output level shown at the plot edge. The plot zooms in on quiet signals.");
-            txt(c, bx + bs, py + 135, `+/-${zz.toFixed(2)}`, { color: th.scale, size: 8.5, align: "right" });
-            txt(c, bx, bb, `Peak gain ${sgn(st.pg || 0)} dB`, { color: th.orange, size: 9, align: "left" });
+                        txt(c, bx, bb, `Peak gain ${sgn(st.pg || 0)} dB`, { color: th.orange, size: 9, align: "left" });
           } else {
           c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
           for (let i = 0; i <= 64; i++) { const x = -1 + i / 32; i ? c.lineTo(X(x), Y(tf(x, k))) : c.moveTo(X(x), Y(tf(x, k))); }
@@ -377,13 +375,10 @@
           hint(px + pw - 112, py + 4, 106, 12, "Peak Levels", "Highest input level, then highest output level, in dB. Measured from the input and output peaks.");
           txt(c, px + pw - 8, sb, lv ? `Peak ${(st.pkI === undefined ? -120 : st.pkI).toFixed(1)} / ${(st.pkO === undefined ? -120 : st.pkO).toFixed(1)} dB` : `Peak ${db(a).toFixed(1)} / ${db(Math.abs(tf(a, k))).toFixed(1)} dB`, { color: th.cyan, size: 9, align: "right" });
           const sx = px + 4, sw = pw - 8, sy = py + 23, sh = 72, mid = sy + sh / 2;
-          // one zoom for input, output and difference (RUBRIC 2.6)
-          const g = fit(st, "scope", lv ? st.scPk || 0 : Math.max(a, Math.abs(tf(a, k)), 0.02));
-          txt(c, px + 116, sb, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
-          hint(px + 114, py + 4, 60, 12, "Zoom", "The waveform is enlarged so the loudest part fills the scope. The number says by how much; quiet signals get a larger zoom.");
+          // fixed scale, true level 1x: full scale = plot half-height (RUBRIC 2.6)
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath(); c.moveTo(sx, mid); c.lineTo(sx + sw, mid); c.stroke();
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
-          const Y = v => mid - clamp(v * g, -1, 1) * sh / 2;
+          const Y = v => mid - clamp(v, -1, 1) * sh / 2;
           if (lv) {
             [[th.dispText, 1, st.scI], [th.cyan, 1.5, st.scO], [th.orange, 1, st.scD]].forEach(([col, lw, arr]) => {
               if (!arr || arr.length < 2) return;
@@ -398,7 +393,7 @@
             c.stroke();
           });
           c.restore();
-          hint(sx, sy, sw, sh, "Waveform Scope", "A short slice of the sound, drawn as a wave. Compare the grey input with the cyan output; the orange line is the difference between them. The scope zooms to fit the level (see Zoom).");
+          hint(sx, sy, sw, sh, "Waveform Scope", "A short slice of the sound, drawn as a wave. Compare the grey input with the cyan output; the orange line is the difference between them. The scope has a fixed scale: full level reaches the top and bottom, so quiet sound looks small.");
           const gy = py + 101, gh = 38;
           hint(px + 4, py + ph - 18, pw - 90, 18, "Gain Change Label", "The strip above shows output level minus input level over time.");
           hint(px + pw - 80, py + ph - 18, 76, 18, "Gain Change", "Level change made by the tape right now, in dB. Plus means louder, minus means quieter.");

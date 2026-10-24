@@ -65,7 +65,7 @@
     s.fb = s.taps.length > 1 ? clamp(s.taps[1].a / Math.max(0.01, s.taps[0].a), 0, 1) : 0;
     s.h.push({ i: fin(m.inPk, 0), o: fin(m.outPk, 0), w: s.wet });
     if (s.h.length > 900) s.h.shift();
-    // scopes (mono = mean of L and R): in, out, out - in; lanes() zooms them with fit()
+    // scopes (mono = mean of L and R): in, out, out - in; lanes() draws them
     const iL = m.inScopeL || [], iR = m.inScopeR || [], oL = m.scopeL || [], oR = m.scopeR || [];
     const n = Math.min(iL.length, iR.length, oL.length, oR.length), sc = s.sc;
     sc.i = []; sc.o = []; sc.d = [];
@@ -75,7 +75,7 @@
       sc.i.push(a); sc.o.push(o); sc.d.push(o - a);
       pk = Math.max(pk, Math.abs(a), Math.abs(o)); pd = Math.max(pd, Math.abs(o - a));
     }
-    sc.pk = pk; sc.pd = pd;                                // peaks of this frame; lanes() zooms with fit()
+    sc.pk = pk; sc.pd = pd;                                // peaks of this frame
     // spectra: 48 bands, fast attack, 24 dB/s release
     for (let i = 0; i < 48; i++) {
       s.si[i] = Math.max(clamp(fin((m.specIn || [])[i], -120), -120, 6), (s.si[i] === undefined ? -120 : s.si[i]) - 24 * dt);
@@ -158,13 +158,16 @@
     ["0", "0.4 s", "0.8 s", "1.2 s", "1.6 s"].forEach((l, i) => txt(c, px(0.4 * i), y + h - 5, l, { color: th.scale, size: 8.5, align: i ? (i === 4 ? "right" : "center") : "left" }));
   }
 
-  // ---- B: zoomed waveform lanes in / out / difference
+  // Fixed magnification of the Out − In lane (the added signal is small next to the dry signal). Never computed from the signal.
+  const DIFF_MAG = 16;
+
+  // ---- B: waveform lanes in / out / difference
   function lanes(c, th, x, y, w, h, st) {
     const s = st.am, env = s.live ? 1 : Math.min(1, dr(st.t).env + 0.15);
     screen(c, th, x, y, w, h);
     strip(c, th, x, y, w, 22);                                 // top strip: menu and readouts (drawn by the caller)
-    const by = strip(c, th, x, y + h - 16, w, 16, true);       // bottom strip: legend and zoom
-    hint(x, y + 22, w, h - 38, "Wet Signal Display", "Three zoomed waveforms, about 5 ms wide: the input, the output, and what the effect added. Measured from the input and output signals.");
+    const by = strip(c, th, x, y + h - 16, w, 16, true);       // bottom strip: legend
+    hint(x, y + 22, w, h - 38, "Wet Signal Display", "Three waveforms, about 5 ms wide: the input, the output, and what the effect added. The input and output are drawn at true level. The added signal is magnified by a fixed ×16. Measured from the input and output signals.");
     legend(c, th, x + 8, by, [[th.dispText, "In", "Grey line: the signal going into the effect."], [th.cyan, "Out", "Cyan line: the signal coming out of the effect."], [th.orange, "Out−In", "Orange line: output minus input. This is only what the effect added, magnified."]], { line: true });
     const top = y + 26, lh = (h - 16 - 4 - 26) / 3, gx = x + 34, gw = w - 40;
     const src = u => 0.6 * Math.sin(u * 6.28) + 0.3 * Math.sin(u * 6.28 * 2.7 + 1) + 0.15 * Math.sin(u * 6.28 * 5.1);
@@ -175,19 +178,17 @@
       return wet ? src(u - tau * 0.12) : src(u);
     };
     const fns = [xx => f(xx, 0), xx => 0.6 * f(xx, 0) + 0.7 * f(xx, 1), xx => 0.7 * f(xx, 1) - 0.4 * f(xx, 0)];
-    // sample values per lane (before zoom)
+    // sample values per lane (true level)
     const data = fns.map((fn, k) => {
       if (s.live) return s.sc[["i", "o", "d"][k]];
       const a = []; for (let i = 0; i <= gw; i += 2) a.push(fn(i) * env); return a;
     });
     const pkOf = a => a.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
-    // RUBRIC 2.6: in and out share one zoom; the difference has its own
-    const gIO = fit(s, "io", Math.max(pkOf(data[0]), pkOf(data[1])));
-    const gD = fit(s, "diff", pkOf(data[2]));
-    const defs = [["In", th.dispText, gIO], ["Out", th.cyan, gIO], ["Out − In", th.orange, gD]];
+    // RUBRIC 2.6: fixed scale. In and out at 1x; the difference at the fixed DIFF_MAG
+    const defs = [["In", th.dispText, 1], ["Out", th.cyan, 1], ["Out − In", th.orange, DIFF_MAG]];
     defs.forEach(([name, col, gain], k) => {
       const ly = top + k * lh, mid = ly + lh / 2, arr = data[k];
-      hint(x + 2, ly + 1, w - 4, lh - 2, ["Input Waveform", "Output Waveform", "Added Signal Waveform"][k], ["The signal going into the effect, zoomed in.", "The signal coming out of the effect, zoomed in.", "Output minus input: only what the effect added. It has its own zoom so small changes show."][k] + " Measured from the last 64 samples.");
+      hint(x + 2, ly + 1, w - 4, lh - 2, ["Input Waveform", "Output Waveform", "Added Signal Waveform"][k], ["The signal going into the effect, at true level.", "The signal coming out of the effect, at true level.", "Output minus input: only what the effect added. It is magnified by a fixed ×16 so small changes show."][k] + " Measured from the last 64 samples.");
       c.save(); c.beginPath(); c.rect(gx, ly + 1, gw, lh - 2); c.clip();
       c.fillStyle = th.meterBg; c.fillRect(gx, ly + 1, gw, lh - 2);
       c.fillStyle = th.dline; c.fillRect(gx, mid, gw, 1);
@@ -195,13 +196,8 @@
       arr.forEach((v0, j) => { const v = clamp(v0 * gain, -1, 1) * (lh / 2 - 2), xx = gx + gw * j / Math.max(1, arr.length - 1); j ? c.lineTo(xx, mid - v) : c.moveTo(xx, mid - v); });
       c.stroke();
       c.restore();
-      if (gain > 1.05) { txt(c, x + 5, mid + 3, `+${(20 * Math.log10(gain)).toFixed(0)} dB`, { color: th.dispText, align: "left", size: 8 }); hint(x + 3, mid - 5, 30, 11, "Lane Zoom", "How much this lane is enlarged so its loudest point fills the lane. " + (k < 2 ? "Input and output share it." : "The added signal has its own zoom.")); }
+      if (gain > 1) { txt(c, x + 5, mid + 3, `×${gain}`, { color: th.dispText, align: "left", size: 8 }); hint(x + 3, mid - 5, 30, 11, "Fixed Magnification", "This lane is magnified by a fixed ×" + gain + ". It is a constant and does not follow the signal. The input and output lanes are at true level."); }
     });
-    const zt = zoomText(gIO);
-    if (zt) {
-      txt(c, x + w - 8, by, zt, { color: th.dispText, size: 8.5, align: "right" });
-      hint(x + w - 70, y + h - 15, 66, 13, "Zoom", "The input and output waveforms are enlarged so the loudest point fills the lane. The number says by how much; quiet signals get a larger zoom.");
-    }
   }
 
   // ---- C: spectrum, input vs output, comb filtering
@@ -259,7 +255,7 @@
           gainStrip(c, th, 608 - GAIN_W - 4, st);
         } },
       { id: "B", name: "Wet signal scope", short: "Scope", width: 588, step, live: amLive,
-        why: "Three zoomed waveforms — in, out and what the effect added — show chorus and ensemble movement as it happens.",
+        why: "Three waveforms — in, out and what the effect added — show chorus and ensemble movement as it happens.",
         bullets: ["Driven by: 64-sample scopes of input, output and out minus in (about 5 ms, mono, auto gain shown as ×N)", "Added-signal lane (orange, magnified) shows how much and how fast the effect moves", "Menu and readouts above the display, dials on the right; Input / Output gain strip at the far right"],
         draw(c, th, st, ps, vals) {
           if (!st.am) return;

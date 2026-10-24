@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -882,8 +862,7 @@ function makeCanvas(mg, opts) {
     const ms = hasN(m.ms, 4) ? m.ms : [-120, -120, -120, -120];
     st.mI = lin(rel(20 * Math.log10(st.mI), ms[0], dt)); st.sI = lin(rel(20 * Math.log10(st.sI), ms[1], dt));
     st.mO = lin(rel(20 * Math.log10(st.mO), ms[2], dt)); st.sO = lin(rel(20 * Math.log10(st.sO), ms[3], dt));
-    // waveform window (option C), auto-scaled
-    st.scPk = Math.max(0.02, ...mi.map(Math.abs), ...mo.map(Math.abs), st.scPk * lin(-6 * dt)); st.scFull = st.scPk * 1.15;
+    // waveform window (option C), fixed scale
     st.sc = { i: mi, o: mo };
   }
 
@@ -893,7 +872,7 @@ function makeCanvas(mg, opts) {
     lead: "Visual cue: what the effect does to the low end — spectrum below 1 kHz, mono/stereo image and band levels, always input against output.",
     options: [
       { id: "A", name: "Low-end spectrum", short: "Spectrum", width: 600, step, live: liveBass,
-        why: "A zoomed 20 Hz–1 kHz spectrum with a response strip below, so boosts and cuts to the low end are visible — like EQ Eight and Auto Filter.",
+        why: "A 20 Hz–1 kHz spectrum with a response strip below, so boosts and cuts to the low end are visible — like EQ Eight and Auto Filter.",
         bullets: ["Measured: FFT spectrum of input (grey) and output (orange line), log frequency 20 Hz–1 kHz",
                   "Measured: output minus input in dB as a cyan response curve (strip below the spectrum); bands where the input is below -80 dB hold their last value",
                   "Readouts: peak frequency and average change below 100 Hz; menu and arrows in the display"],
@@ -927,19 +906,18 @@ function makeCanvas(mg, opts) {
 
       { id: "B", name: "Vectorscope", short: "Stereo", width: 632, step, live: liveBass,
         why: "A vectorscope and correlation bars show whether the bass stays centred and mono-safe — like Utility's width and phase displays.",
-        bullets: ["Measured: the last ~4 frames of left/right samples drawn as a vectorscope (vertical = mid, horizontal = side), auto-zoomed so the loudest point fills the plot, input grey, output orange",
+        bullets: ["Measured: the last ~4 frames of left/right samples drawn as a vectorscope (vertical = mid, horizontal = side), drawn at a fixed scale (full scale = plot edge), input grey, output orange",
                   "Measured: correlation of L and R (input from the 64-sample scope, output from the correlation meter), and Mid/Side level, input against output",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
           const y0 = HEAD_H + 4, H = DEVICE_H - 8;
-          // screen 1: stereo image (legend + zoom in the top strip)
+          // screen 1: stereo image (legend in the top strip)
           const x = 4, sw = 145;
           screen(c, th, x, y0, sw, H);
           strip(c, th, x, y0, sw, 18);
           const s = H - 19 - 3, ix = x + 3, iy = y0 + 19, cx = ix + s / 2, cy = iy + s / 2, R = s / 2 - 6;
-          // one zoom for input and output dots (RUBRIC 2.6)
-          let pk = 0; for (const p of st.pin.concat(st.pout)) pk = Math.max(pk, Math.abs(p[0]), Math.abs(p[1]));
-          const g = fit(st, "vs", pk);
+          // fixed scale, true level (RUBRIC 2.6)
+          const g = 1;
           c.save(); c.beginPath(); c.rect(ix, iy, s, s); c.clip();
           c.fillStyle = th.dline; c.fillRect(Math.round(cx), iy, 1, s); c.fillRect(ix, Math.round(cy), s, 1);
           line(c, [[cx - R, cy + R], [cx + R, cy - R]], th.dline, 1); line(c, [[cx - R, cy - R], [cx + R, cy + R]], th.dline, 1);
@@ -948,8 +926,6 @@ function makeCanvas(mg, opts) {
           c.restore();
           legend(c, th, x + 6, y0 + 12, [[greyLine(), "In", "Grey is the signal going into the effect: dots in the stereo image, and the grey bars and readouts."], [th.orange, "Out", "Orange is the effect output: dots in the stereo image, and the orange bars and readouts."]]);
           hint(ix, iy, s, s, "Stereo Image", "Each dot is one moment of the signal. Up and down is the middle (mono) part; left and right is the side (stereo) part. A tall narrow shape is mono. Measured from the left and right audio.");
-          txt(c, x + sw - 6, y0 + 12, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
-          hint(x + sw - 62, y0 + 2, 58, 14, "Zoom", "The image is enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
           txt(c, cx, iy + 10, "M", { color: th.scale, size: 8.5 }); txt(c, ix + s - 6, cy - 3, "S", { color: th.scale, size: 8.5, align: "right" });
           txt(c, ix + 5, iy + s - 5, "L", { color: th.scale, size: 8.5, align: "left" }); txt(c, ix + s - 5, iy + s - 5, "R", { color: th.scale, size: 8.5, align: "right" });
           hint(cx - 8, iy + 1, 16, 12, "Mid Axis (M)", "Up and down is the middle part of the sound: what is the same in left and right.");
@@ -992,7 +968,7 @@ function makeCanvas(mg, opts) {
 
       { id: "C", name: "Bands", short: "Bands", width: 632, step, live: liveBass,
         why: "A scope for the bass waveform and four low-end band meters, each showing input against output — like Drum Buss's low-end section.",
-        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms (less than one bass cycle), auto-zoomed so the loudest point fills the plot",
+        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms (less than one bass cycle), drawn at a fixed scale",
                   "Measured: level in four bands (Sub, Low, Bass, Low-mid; power sum of the spectrum bands inside each range), input bar over output bar, with the change in dB",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
@@ -1007,17 +983,15 @@ function makeCanvas(mg, opts) {
             const ph = q / pw * 2 + st.t * 0.3, v = st.A * (Math.sin(TAU * ph) + 0.3 * Math.sin(TAU * 2 * ph + 0.6)) / 1.3;
             av.push(v); bv.push(Math.tanh(1.7 * v) / Math.tanh(1.7));
           }
-          // one zoom for input and output (RUBRIC 2.6)
-          const g = fit(st, "scope", Math.max(...av.map(Math.abs), ...bv.map(Math.abs)));
+          // fixed scale, true level (RUBRIC 2.6)
+          const g = 1;
           av.forEach((v, i) => { a.push([x + 3 + i * 2, mid - v * g * hh]); b.push([x + 3 + i * 2, mid - bv[i] * g * hh]); });
           c.save(); c.beginPath(); c.rect(x + 3, py, pw, sh); c.clip();
           c.fillStyle = th.dline; c.fillRect(x + 3, Math.round(mid), pw, 1);
           line(c, a, th.cyan, 1.2); line(c, b, th.orange, 1.8); c.restore();
           txt(c, x + 6, y0 + 12, "Scope", { color: th.scale, align: "left" });
           legend(c, th, x + 44, y0 + 12, [[th.cyan, "In", "Cyan is the signal going into the effect: the input wave and the upper bar of each band."], [th.orange, "Out", "Orange is the effect output: the output wave, the lower bar of each band and the dB change."]]);
-          txt(c, x + w - 6, y0 + 12, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
-          hint(x + w - 80, y0 + 2, 76, 14, "Zoom", "The waves are enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
-          hint(x + 3, py, pw, sh, "Bass Scope", "Shape of the input and output waves over a few milliseconds, which is less than one bass cycle. Measured from the audio; the zoom follows the signal.");
+          hint(x + 3, py, pw, sh, "Bass Scope", "Shape of the input and output waves over a few milliseconds, which is less than one bass cycle. Measured from the audio, at a fixed scale.");
           strip(c, th, x, py + sh + 2, w, 0, true);
           BANDS.forEach((bd, i) => {
             const ry = py + sh + 6 + i * 18, d = st.bOut[i] - st.bIn[i];

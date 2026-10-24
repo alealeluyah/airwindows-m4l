@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -979,8 +959,8 @@ function sonogram(c, th, x, y, w, h, st, withRd) {
     [th.orange, "Very loud", "Orange marks the loudest parts of the output."]]);
   hint(x, Y, w, H, "Sonogram", "Time runs left to right, newest on the right. Low frequencies are at the bottom, high at the top. Measured with an FFT of the output.");
 }
-// Scope screen: top strip (o.top, caller draws the menu there) with the zoom readout, legend + time window in the bottom strip.
-// Input and output share one auto zoom (RUBRIC 2.6).
+// Scope screen: top strip (o.top, caller draws the menu there) legend + time window in the bottom strip.
+// Fixed scale, true level (RUBRIC 2.6).
 function scope(c, th, x, y, w, h, st, o = {}) {
   const z = Z(st), top = o.top || 18, bot = 15;
   screen(c, th, x, y, w, h);
@@ -989,20 +969,14 @@ function scope(c, th, x, y, w, h, st, o = {}) {
   const Y = y + top, H = h - top - bot, my = Y + H / 2, a = H / 2 - 3;
   c.strokeStyle = th.dline; c.lineWidth = 1;
   [-0.45, 0, 0.45].forEach(f => { c.beginPath(); c.moveTo(x + 4, my + f * a * 2); c.lineTo(x + w - 4, my + f * a * 2); c.stroke(); });
-  hint(x, Y, w, H, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound. The picture is enlarged when the sound is quiet.");
+  hint(x, Y, w, H, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound. It is drawn at a fixed scale, so a quiet sound looks quiet.");
   legend(c, th, x + 8, ly, [
     [th.scale, "Input", "The waveform going into the effect. Measured from the input signal."],
     [th.cyan, "Output", "The waveform coming out of the effect. Measured from the output signal."]], { line: true });
   txt(c, x + w - 8, ly, "20 ms", { color: th.dispText, size: 8.5, align: "right" });
   hint(x + w - 44, by + 1, 40, 13, "Time Window", "The scope shows 20 milliseconds of sound.");
   if (!z.sIn.length) return;
-  let pk = 0; for (const arr of [z.sIn, z.sOut]) for (const v of arr) pk = Math.max(pk, Math.abs(v));
-  const g = fit(z, "scope", pk);
-  const zt = zoomText(g);
-  if (zt) {
-    txt(c, x + w - 8, y + top - 6, zt, { color: th.dispText, align: "right", size: 8.5 });
-    hint(x + w - 80, y + 2, 76, top - 4, "Zoom", "The waveform is enlarged so the loudest point fills the screen. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
-  }
+  const g = 1;                                       // fixed scale
   c.save(); c.beginPath(); c.rect(x, Y, w, H); c.clip();
   for (const [arr, col, lw] of [[z.sIn, th.scale, 1], [z.sOut, th.cyan, 1.5]]) {
     c.strokeStyle = col; c.lineWidth = lw; c.beginPath();

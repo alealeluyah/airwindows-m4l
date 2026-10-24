@@ -240,8 +240,8 @@ function sonogram(c, th, x, y, w, h, st, withRd) {
     [th.orange, "Very loud", "Orange marks the loudest parts of the output."]]);
   hint(x, Y, w, H, "Sonogram", "Time runs left to right, newest on the right. Low frequencies are at the bottom, high at the top. Measured with an FFT of the output.");
 }
-// Scope screen: top strip (o.top, caller draws the menu there) with the zoom readout, legend + time window in the bottom strip.
-// Input and output share one auto zoom (RUBRIC 2.6).
+// Scope screen: top strip (o.top, caller draws the menu there) legend + time window in the bottom strip.
+// Input and output share one fixed scale: true level, 1x (RUBRIC 2.6).
 function scope(c, th, x, y, w, h, st, o = {}) {
   const z = Z(st), top = o.top || 18, bot = 15;
   screen(c, th, x, y, w, h);
@@ -250,24 +250,17 @@ function scope(c, th, x, y, w, h, st, o = {}) {
   const Y = y + top, H = h - top - bot, my = Y + H / 2, a = H / 2 - 3;
   c.strokeStyle = th.dline; c.lineWidth = 1;
   [-0.45, 0, 0.45].forEach(f => { c.beginPath(); c.moveTo(x + 4, my + f * a * 2); c.lineTo(x + w - 4, my + f * a * 2); c.stroke(); });
-  hint(x, Y, w, H, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound. The picture is enlarged when the sound is quiet.");
+  hint(x, Y, w, H, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound. The scale is fixed, so quiet sound looks small.");
   legend(c, th, x + 8, ly, [
     [th.scale, "Input", "The waveform going into the effect. Measured from the input signal."],
     [th.cyan, "Output", "The waveform coming out of the effect. Measured from the output signal."]], { line: true });
   txt(c, x + w - 8, ly, "20 ms", { color: th.dispText, size: 8.5, align: "right" });
   hint(x + w - 44, by + 1, 40, 13, "Time Window", "The scope shows 20 milliseconds of sound.");
   if (!z.sIn.length) return;
-  let pk = 0; for (const arr of [z.sIn, z.sOut]) for (const v of arr) pk = Math.max(pk, Math.abs(v));
-  const g = fit(z, "scope", pk);
-  const zt = zoomText(g);
-  if (zt) {
-    txt(c, x + w - 8, y + top - 6, zt, { color: th.dispText, align: "right", size: 8.5 });
-    hint(x + w - 80, y + 2, 76, top - 4, "Zoom", "The waveform is enlarged so the loudest point fills the screen. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
-  }
   c.save(); c.beginPath(); c.rect(x, Y, w, H); c.clip();
   for (const [arr, col, lw] of [[z.sIn, th.scale, 1], [z.sOut, th.cyan, 1.5]]) {
     c.strokeStyle = col; c.lineWidth = lw; c.beginPath();
-    arr.forEach((v, i) => { const px = x + 4 + (w - 8) * i / (arr.length - 1), py = my - clamp(v * g, -1, 1) * a; i ? c.lineTo(px, py) : c.moveTo(px, py); });
+    arr.forEach((v, i) => { const px = x + 4 + (w - 8) * i / (arr.length - 1), py = my - clamp(v, -1, 1) * a; i ? c.lineTo(px, py) : c.moveTo(px, py); });
     c.stroke();
   }
   c.restore();

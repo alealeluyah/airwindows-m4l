@@ -31,19 +31,14 @@
     st.clipP = Math.max(100 * clipped / N, (st.clipP || 0) - 100 * Math.max(0, dtm));   // clip lamp holds ~1 s
     return { d, f, ceil, st, inL, outL, diff: outL - inL, gr: st.gr || 0, clipPct: st.clipP, curve: simCurve(f) };
   }
-  // A panel is a SCREEN with a strip on top (title, legend, readout, zoom). RUBRIC 2.1 / 2.3.
+  // A panel is a SCREEN with a strip on top (title, legend, readout). RUBRIC 2.1 / 2.3.
   const SH = 19;
-  const box = (c, th, x, y, w, h, title, right, zt) => {
+  const box = (c, th, x, y, w, h, title, right) => {
     screen(c, th, x, y, w, h);
     strip(c, th, x, y, w, SH);
     c.font = `400 9.5px ${FONT}`;
     let rx = x + w - 6;
     if (right) { txt(c, rx, y + 13, right, { color: th.orange, align: "right" }); rx -= Math.ceil(c.measureText(right).width) + 10; }
-    if (zt) {   // auto zoom (RUBRIC 2.6)
-      const zw = Math.ceil(c.measureText(zt).width);
-      txt(c, rx, y + 13, zt, { color: th.dispText, align: "right" });
-      hint(rx - zw - 2, y + 3, zw + 4, 13, "Zoom", "The waveform is enlarged so the loudest part fills the screen. The number says by how much; quiet signals get a larger zoom. It follows the signal level automatically.");
-    }
   };
   // legend in a display header row: starts after the title, stops before the right-hand text, drops items that do not fit
   const SCG = () => (S.theme === "light" ? "#9a9a9a" : "#6a6a6a");
@@ -117,8 +112,8 @@
     if (m.ceil) { hint(px, Y(m.ceil) - 3, s, 6, "Ceiling Line", "The level where the effect stops the signal. Estimated from the top of the measured curve."); hint(px, Y(-m.ceil) - 3, s, 6, "Ceiling Line", "The level where the effect stops the signal. Estimated from the top of the measured curve."); }
     hint(X(a) - 5, Y(m.f(a)) - 5, 10, 10, "Input Peak Dot", "Marks the current input peak on the curve. Its height is the output level for that peak.");
   }
-  function scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp, zt) {
-    hdrLegend(c, th, x, y, w, title, [zt, right].filter(Boolean).join("   "), [
+  function scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp) {
+    hdrLegend(c, th, x, y, w, title, right, [
       [SCG(), "Input", "The grey line is the signal going into the effect."],
       [th.cyan, "Output", "The cyan line is the signal coming out of the effect."],
       [th.orange, "Change", "The orange fill is the difference between input and output. Orange dots mark samples cut at the ceiling."]], { line: true });
@@ -126,7 +121,7 @@
     if (right) hint(x + w - 100, y + 2, 96, 12, "Ceiling Readout", "The level where the effect cuts the peaks, in dB. Shows none when the signal has not reached a ceiling.");
     if (m.ceil) for (const s of [-1, 1]) hint(px, mid - s * m.ceil * amp - 3, pw, 6, "Ceiling Line", "The level where the effect cuts the peaks. Estimated from the measured curve.");
   }
-  // zoomed oscilloscope: input (grey), output (cyan), difference filled orange
+  // oscilloscope (fixed scale): input (grey), output (cyan), difference filled orange
   function scopePanel(c, th, x, y, w, h, m, title, right, foot = 0) {
     if (m.live) return scopeLive(c, th, x, y, w, h, m, title, right, foot);
     const px = x + 4, pw = w - 8, py = y + SH + 3, ph = h - SH - 7 - foot, mid = py + ph / 2;
@@ -134,8 +129,8 @@
     const xi = [], yo = [];
     for (let i = 0; i <= n; i++) { const v = sigAt(ph0 + i / n * 2, m.st.aV); xi.push(v); yo.push(m.f(v)); }
     let pk = 0; for (let i = 0; i <= n; i++) pk = Math.max(pk, Math.abs(xi[i]), Math.abs(yo[i]));
-    const g = fit(m.st, "scope", pk), amp = ph / 2 * g, zt = zoomText(g);   // loudest point fills ~90 % (RUBRIC 2.6)
-    box(c, th, x, y, w, h, "", right, zt);
+    const amp = ph / 2;   // fixed scale: full scale = plot half-height (RUBRIC 2.6)
+    box(c, th, x, y, w, h, "", right);
     c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
     c.fillStyle = th.dline; c.fillRect(px, mid, pw, 1);
     if (m.ceil) { c.fillRect(px, mid - m.ceil * amp, pw, 1); c.fillRect(px, mid + m.ceil * amp, pw, 1); }
@@ -149,7 +144,7 @@
     yo.forEach((v, i) => { const X = px + i / n * pw; i ? c.lineTo(X, mid - v * amp) : c.moveTo(X, mid - v * amp); }); c.stroke();
     if (m.ceil) { c.fillStyle = th.orange; yo.forEach((v, i) => { if (Math.abs(v) >= m.ceil - 1e-6) c.fillRect(px + i / n * pw - 1, mid - v * amp - 1, 2, 2); }); }
     c.restore();
-    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp, zt);
+    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp);
   }
   // FFT-style harmonic display: input spectrum (grey), output (cyan), content the effect ADDED (orange)
   function specExtras(c, th, x, y, w, h, m, title) {
@@ -267,13 +262,10 @@
       if (mx >= 0.25 && cmax < 0.85 * mx) cl = cmax;
     }
     st.ceil = cl === null ? null : (st.ceil == null ? cl : st.ceil + (cl - st.ceil) * 0.3);
-    // scopes (left channel, about 5 ms), with an automatic zoom so quiet material stays readable
+    // scopes (left channel, about 5 ms)
     const sI = Array.from(m.inScopeL || []).map(v => fin(v, 0)), sO = Array.from(m.scopeL || []).map(v => fin(v, 0));
     const n = Math.min(sI.length, sO.length);
     st.scIn = sI.slice(0, n); st.scOut = sO.slice(0, n);
-    let sp = 0; for (let i = 0; i < n; i++) sp = Math.max(sp, Math.abs(sI[i]), Math.abs(sO[i]));
-    st.sPk = Math.max(sp, fin(st.sPk, 0) * Math.pow(10, -12 * dt / 20));
-    st.sg = clamp(0.9 / Math.max(st.sPk, 1e-4), 1, 16);
     // share of samples the effect cut (output smaller than input; at the ceiling when one is known), lamp holds ~1 s
     let cut = 0, tot = 0;
     for (const [a, b] of [[m.inScopeL, m.scopeL], [m.inScopeR, m.scopeR]]) {
@@ -302,13 +294,13 @@
   }
   const simCurve = f => { const o = []; for (let i = 0; i <= 48; i++) { const v = -1.1 + i / 48 * 2.2; o.push([v, f(v)]); } return o; };
   const hzFrac = hz => Math.log(hz / 20) / Math.log(1000);
-  // live scope: measured input (grey) and output (cyan) samples, orange = difference, zoomed automatically
+  // live scope: measured input (grey) and output (cyan) samples, orange = difference, fixed scale
   function scopeLive(c, th, x, y, w, h, m, title, right, foot = 0) {
     const st = m.st, xi = st.scIn || [], yo = st.scOut || [], n = Math.min(xi.length, yo.length) - 1;
     const px = x + 4, pw = w - 8, py = y + SH + 3, ph = h - SH - 7 - foot, mid = py + ph / 2;
     let pk = 0; for (let i = 0; i <= n; i++) pk = Math.max(pk, Math.abs(xi[i]), Math.abs(yo[i]));
-    const g = fit(st, "scope", pk), amp = ph / 2 * g, zt = zoomText(g);   // one zoom for input and output (RUBRIC 2.6)
-    box(c, th, x, y, w, h, "", right, zt);
+    const amp = ph / 2;   // fixed scale, same for input and output (RUBRIC 2.6)
+    box(c, th, x, y, w, h, "", right);
     c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
     c.fillStyle = th.dline; c.fillRect(px, mid, pw, 1);
     if (m.ceil) { c.fillRect(px, mid - m.ceil * amp, pw, 1); c.fillRect(px, mid + m.ceil * amp, pw, 1); }
@@ -325,7 +317,7 @@
       if (m.ceil) { c.fillStyle = th.orange; yo.forEach((v, i) => { if (Math.abs(v) >= m.ceil * 0.97 && Math.abs(xi[i]) > Math.abs(v) * 1.05) c.fillRect(X(i) - 1, Y(v) - 1, 2, 2); }); }
     }
     c.restore();
-    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp, zt);
+    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp);
   }
   // live spectrum: 48 bands, grey = input, cyan = output, orange = output above input (added by the effect)
   function specLive(c, th, x, y, w, h, m, title, foot = 0) {

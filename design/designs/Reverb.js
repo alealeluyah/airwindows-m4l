@@ -27,12 +27,10 @@ DESIGNS["Reverb"] = {
           strip(c, th, dx, dy, dw, 22);
           // output (reverb) translucent behind, dry input on top: the tail shows where orange outlasts grey
           const dryCol = S.theme === "light" ? "#5e5e5eb3" : "#8a8a8ab3";
-          // one zoom for both, so dry and wet stay comparable (RUBRIC 2.6)
-          const g = fit(st, "wave", histPeak(st.hist, ["dry", "wet"], dw - 8));
+          // fixed scale (RUBRIC 2.6): true level, 1x, same for dry and wet
+          const g = 1;
           waveScroll(c, th, dx + 4, dy + 24, dw - 8, 80, st.hist, "wet", th.orange + "73", g);
           waveScroll(c, th, dx + 4, dy + 24, dw - 8, 80, st.hist, "dry", dryCol, g);
-          txt(c, dx + dw - 160, dy + 14, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
-          hint(dx + dw - 230, dy + 4, 72, 12, "Zoom", "The waveform is enlarged so the loudest part of the last seconds fills the screen. The number says by how much; quiet signals get a larger zoom.");
           hint(dx + 4, dy + 22, dw - 8, 78, "Waveform", "The last seconds, newest on the right. Grey: the dry input. Orange: the output with the reverb; where orange lasts longer than grey you see the reverb tail.");
           menu(c, th, dx + 6, dy + 5, 110, "Galactic3"); arrows(c, th, dx + 120, dy + 5);
           legend(c, th, dx + dw - 150, dy + 14, [[dryCol, "Dry input", "The signal going into the reverb."],

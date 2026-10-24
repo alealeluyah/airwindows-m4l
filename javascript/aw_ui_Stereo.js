@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -813,8 +793,8 @@ function makeCanvas(mg, opts) {
     }
     st.inL = Math.max(st.inL === undefined ? -120 : st.inL - 24 * dt, Math.max(pkIn[0], pkIn[1]));
     st.outL = Math.max(st.outL === undefined ? -120 : st.outL - 24 * dt, Math.max(pkOut[0], pkOut[1]));
-    // vectorscope: 12 samples of the 64-sample scopes per frame, mid up / side across. The
-    // display zooms with fit() (RUBRIC 2.6); input and output share one zoom.
+    // vectorscope: 12 samples of the 64-sample scopes per frame, mid up / side across.
+    // Fixed scale (RUBRIC 2.6): true level, 1x.
     const iL = m.inScopeL || [], iR = m.inScopeR || [], oL = m.scopeL || [], oR = m.scopeR || [];
     const n = Math.min(iL.length, iR.length, oL.length, oR.length);
     for (let j = 0; j < 12 && n > 0; j++) {
@@ -877,7 +857,7 @@ function makeCanvas(mg, opts) {
 
   function gonio(c, th, x, y, w, h, s) {
     screen(c, th, x, y, w, h);
-    const pH = h - 17;                                     // plot height; the bottom strip holds legend and zoom
+    const pH = h - 17;                                     // plot height; the bottom strip holds the legend
     hint(x, y, w, pH, "Vectorscope Display", "Each dot is one moment of the sound. Straight up means the same in left and right (mono). Wide sideways spread means a wide stereo image. Measured from the left and right channels, before and after the effect.");
     const cx = x + w / 2, cy = y + pH / 2, R = Math.min(w, pH) / 2 - 16;
     c.save(); c.beginPath(); c.rect(x, y, w, pH); c.clip();
@@ -887,11 +867,8 @@ function makeCanvas(mg, opts) {
     c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
     c.beginPath(); c.moveTo(cx - R * S2, cy - R * S2); c.lineTo(cx + R * S2, cy + R * S2);
     c.moveTo(cx + R * S2, cy - R * S2); c.lineTo(cx - R * S2, cy + R * S2); c.stroke();
-    // one zoom for input and output: the farthest dot lands at ~90 % of the radius
-    const n = s.pts.length;
-    let pk = 0;
-    for (let i = 0; i < n; i++) { const p = s.pts[i]; pk = Math.max(pk, Math.abs(p.xi), Math.abs(p.yi), Math.abs(p.xo), Math.abs(p.yo)); }
-    const g = fit(s, "gonio", pk), k = R * g;
+    // fixed scale (RUBRIC 2.6): full scale = the outer ring
+    const n = s.pts.length, k = R;
     for (let i = 0; i < n; i++) {
       const p = s.pts[i];
       c.globalAlpha = 0.25 + 0.55 * (i / n);
@@ -909,11 +886,6 @@ function makeCanvas(mg, opts) {
     txt(c, cx, y + pH - 4, "S", { color: th.scale, size: 9 });
     const by = strip(c, th, x, y + h - 17, w, 17, true);
     legend(c, th, x + 8, by, [[th.dispText, "In", "Grey dots: the stereo image of the signal going into the effect."], [th.cyan, "Out", "Cyan dots: the stereo image of the signal coming out of the effect."]]);
-    const zt = zoomText(g);
-    if (zt) {
-      txt(c, x + w - 8, by, zt, { color: th.dispText, size: 8.5, align: "right" });
-      hint(x + w - 70, y + h - 15, 66, 13, "Zoom", "The dots are enlarged so the farthest dot reaches the edge of the circle. The number says by how much; quiet signals get a larger zoom. Input and output share it.");
-    }
     hint(cx - 8, y + 1, 16, 12, "Mono Axis (M)", "The up-down line. Dots on it carry the same signal in left and right. Measured from the sum of left and right.");
     hint(cx - 8, y + pH - 14, 16, 12, "Side Axis (S)", "The across line. Dots far from the centre line are different in left and right. Measured from the difference of left and right.");
     hint(x + 2, y + 1, 14, 12, "Left Channel Axis (L)", "The diagonal to the upper left. Dots here are louder in the left channel.");
@@ -930,7 +902,7 @@ function makeCanvas(mg, opts) {
     options: [
       { id: "A", name: "Vectorscope", short: "Vector", width: 588, step, live: stLive,
         why: "A round vectorscope shows where the sound sits in the stereo field, with correlation, width and balance bars at the side — like the displays in Utility and Live's spectrum tools.",
-        bullets: ["Driven by: 64-sample L/R scopes of input and output (mid up, side across, shared auto gain ×1-4); correlation and width from the mid/side RMS values", "Correlation, width and balance bars for input and output; the orange zone marks out-of-phase risk", "Menu and arrows top-left, dials below (0 to 6 handled); Input / Output gain strip on the right"],
+        bullets: ["Driven by: 64-sample L/R scopes of input and output (mid up, side across, fixed scale, true level); correlation and width from the mid/side RMS values", "Correlation, width and balance bars for input and output; the orange zone marks out-of-phase risk", "Menu and arrows top-left, dials below (0 to 6 handled); Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
           const s = st.st; if (!s) return;
           tile(c, th, 4, Y0, 150, FH);                       // selector + dials

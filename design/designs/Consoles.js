@@ -182,9 +182,8 @@
           const sb = strip(c, th, px, py, pw, 19);
           const bb = strip(c, th, px, py + ph - 18, pw, 18, true);
           const bs = 104, bx = px + 8, by = py + 23, hs = bs / 2, cx = bx + hs, cy = by + hs;
-          // one zoom for input and output (RUBRIC 2.6)
-          const gz = fit(st, "vec", lv ? st.vPk || 0 : Math.min(1, a * 1.2));
-          const sc = hs / 1.4 * gz;
+          // fixed scale, same for input and output: a full-scale mono sample (L = R = 1) reaches the box edge (RUBRIC 2.6)
+          const sc = hs / 1.4;
           rr(c, bx + 0.5, by + 0.5, bs, bs, 0, null, th.dline);
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath();
           c.moveTo(cx, by); c.lineTo(cx, by + bs); c.moveTo(bx, cy); c.lineTo(bx + bs, cy);
@@ -194,8 +193,6 @@
           legend(c, th, px + 8, sb, [
             [th.dispText, "In", "Grey trace: the left and right samples going into the console."],
             [th.cyan, "Out", "Cyan trace: the left and right samples coming out of the console."]]);
-          txt(c, px + 82, sb, zoomText(gz), { color: th.dispText, size: 8.5, align: "left" });
-          hint(px + 80, py + 4, 60, 12, "Zoom", "The vectorscope is enlarged so the widest point fills the plot. The number says by how much; quiet signals get a larger zoom.");
           hint(bx, by, bs, bs, "Vectorscope", "Each left and right sample pair is a point. A tall thin line means mono, a wide cloud means wide stereo. Measured from the input and output samples.");
           hint(bx, by, 20, 12, "Left Channel", "Points toward the upper left are louder in the left channel.");
           hint(bx + bs - 20, by, 20, 12, "Right Channel", "Points toward the upper right are louder in the right channel.");
@@ -326,7 +323,7 @@
           hint(px + 40, my, 30, mh, "Level Scale", "Level in dB. 0 is the top; lower levels are further down.");
           txt(c, px + 23, bb, Math.max(-120, hIn).toFixed(1), { color: th.cyan, size: 9 });
           txt(c, px + 87, bb, Math.max(-120, hOut).toFixed(1), { color: th.cyan, size: 9 });
-          // level history (dB scale: fixed, no zoom)
+          // level history (dB scale: fixed)
           const hx = px + 112, hw = pw - 120, hy = py + 24, hh = 60;
           txt(c, hx, sb, "Level history", { color: th.scale, size: 8.5, align: "left" });
           legend(c, th, hx + 72, sb, [

@@ -59,6 +59,8 @@
 
   // ---- simulated lo-fi degradation. A generic crusher/filter/wobble stands in for any effect; displays only compare in vs out ----
   const W_A = 322;                                   // waveform pixels in option A
+  // RUBRIC 2.6, tiny signal: the error strip uses ONE fixed magnification (typical quantising error is a few percent of full scale). Never computed from the signal.
+  const ERR_MAG = 16;
   const srcV = (st, px, n) => st.A * (0.8 * Math.sin(TAU * (px / n * 1.5 + st.t * 0.2)) + 0.25 * Math.sin(TAU * (px / n * 4.5) + 1)) / 1.05;
   const lofiIn = (st, f) => 10 * Math.log10(Math.pow(10, (-12 - 2.4 * Math.log2(f / 100) + 20 * Math.log10(st.A)) / 10) + 1e-10);
   const lofiOut = (st, f) => 10 * Math.log10(Math.pow(10, (lofiIn(st, f) - 10 * Math.log10(1 + Math.pow(f / st.fc, 6))) / 10) + Math.pow(10, st.nf / 10));
@@ -138,9 +140,9 @@
     lead: "Visual cue: the damage itself — steps in the waveform, lost highs, noise floor and pitch wobble, measured as output against input.",
     options: [
       { id: "A", name: "Redux scope", short: "Scope", width: 632, step, live: liveLofi,
-        why: "A zoomed waveform shows the smooth input and the stepped output, with an error strip underneath — like Redux.",
-        bullets: ["Measured: waveform of input (cyan) and output (orange), quantising steps visible; real audio shows the last few ms, auto-zoomed so the loudest point fills the plot (level lines only in the simulated preview)",
-                  "Measured: error strip (output minus input, zoomed on its own), noise-floor readout (level of output minus input), number of distinct sample values and value changes in the window",
+        why: "A waveform at true level shows the smooth input and the stepped output, with an error strip underneath — like Redux.",
+        bullets: ["Measured: waveform of input (cyan) and output (orange), quantising steps visible; real audio shows the last few ms, drawn at a fixed scale, true level 1x (level lines only in the simulated preview)",
+                  "Measured: error strip (output minus input, at a fixed ×16 magnification), noise-floor readout (level of output minus input), number of distinct sample values and value changes in the window",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
           if (!st.wIn) return;
@@ -148,8 +150,8 @@
           const x = 4, w = 330, pw = w - 6, py = y0 + 20, wh = 84, mid = py + wh / 2, hh = wh / 2;
           screen(c, th, x, y0, w, H);
           strip(c, th, x, y0, w, 18);
-          // one zoom for input and output (RUBRIC 2.6)
-          const g = fit(st, "scope", Math.max(...st.wIn.map(Math.abs), ...st.wOut.map(Math.abs)));
+          // RUBRIC 2.6: fixed scale, true level (1x)
+          const g = 1;
           c.save(); c.beginPath(); c.rect(x + 3, py, pw, wh); c.clip();
           const Lq = Math.pow(2, st.bits - 1);
           if (Lq <= 24) for (let k = -Math.floor(Lq); k <= Math.floor(Lq); k++) { c.fillStyle = k ? th.dline : th.scale; c.fillRect(x + 3, Math.round(mid - k / Lq * g * hh), pw, 1); }
@@ -159,20 +161,18 @@
           c.restore();
           legend(c, th, x + 6, y0 + 12, [[th.cyan, "In", "The cyan wave is the smooth signal going into the effect."], [th.orange, "Out", "The orange wave is the effect output. Its steps are the rounding in level and time that the effect adds."]], { line: true });
           ltxt(c, x + 76, y0 + 12, `Levels ${st.levelsN}   Steps ${st.changes}`, th.dispText, "Levels and Steps Readout", "Levels is how many different sample values the output uses. Steps is how often the value changes in the window. Few levels means a coarse, crunchy sound. Measured from the output audio.");
-          txt(c, x + w - 6, y0 + 12, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
-          hint(x + w - 80, y0 + 2, 76, 14, "Zoom", "The waves are enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
           hint(x + 3, py, pw, wh, "Redux Scope", "Shape of the input and output waves over a few milliseconds. The output shows stair steps when the effect lowers bit depth or sample rate. Measured from the input and output audio.");
           strip(c, th, x, py + wh + 2, w, 0, true);
           strip(c, th, x, y0 + H - 16, w, 16, true);
           const ey = py + wh + 4, eh = y0 + H - 18 - ey, em = ey + eh / 2;
-          const ge = fit(st, "err", Math.max(...st.err.map(Math.abs)));
+          const ge = ERR_MAG;
           c.save(); c.beginPath(); c.rect(x + 3, ey, pw, eh); c.clip();
           line(c, st.err.map((v, i) => [x + 4 + i, em - cl(v * ge, -1, 1) * (eh / 2 - 2)]), greyLine(), 1);
           c.restore();
-          legend(c, th, x + 6, y0 + H - 5, [[greyLine(), "Error", "The grey line is the output minus the input: the damage the effect adds, zoomed on its own so it fills its strip."]], { line: true });
-          txt(c, x + 60, y0 + H - 5, zoomText(ge), { color: th.dispText, align: "left", size: 8.5 });
-          hint(x + 58, y0 + H - 15, 70, 14, "Error Zoom", "The error line is enlarged so its loudest point fills its strip. The error is small, so it needs its own zoom.");
-          hint(x + 3, ey, pw, eh, "Error Strip", "The difference between output and input, zoomed to fill the strip. A flat line means the effect changed nothing. Measured from the input and output audio.");
+          legend(c, th, x + 6, y0 + H - 5, [[greyLine(), "Error", "The grey line is the output minus the input: the damage the effect adds, shown at a fixed magnification of ×16."]], { line: true });
+          txt(c, x + 60, y0 + H - 5, "\u00d7" + ERR_MAG, { color: th.dispText, align: "left", size: 8.5 });
+          hint(x + 58, y0 + H - 15, 70, 14, "Error Magnification", "A fixed magnification of ×16 (not adjusted to the signal). The error is small, so the strip shows it 16 times larger than the waveform above.");
+          hint(x + 3, ey, pw, eh, "Error Strip", "The difference between output and input, at a fixed ×16 magnification. A flat line means the effect changed nothing. Measured from the input and output audio.");
           rtxt(c, x + w - 6, y0 + H - 5, st.errDb <= -100 ? "Floor < -100 dB" : `Floor ${st.errDb.toFixed(0)} dB`, th.dispText, "Noise Floor Readout", "Level of the error in dB: how loud the added noise and rounding are. Lower is cleaner. Measured as the output minus the input.", 8.5);
           tile(c, th, 336, y0, 294, H);
           menu(c, th, 340, y0 + 4, 120, "DeRez5"); arrows(c, th, 464, y0 + 4);
@@ -221,14 +221,13 @@
           const x = 4, w = 290, th1 = 66;
           screen(c, th, x, y0, w, H);
           strip(c, th, x, y0, w, 18);
-          // level history is a dB scale in real audio (fixed, labelled): no zoom there; the simulated preview is linear and auto-fits
-          const gl = st.live ? 1 : fit(st, "lvl", histPeak(st.hist, ["inE", "outE", "dE"], w - 8));
+          // level history is a dB scale in real audio (fixed, labelled): fixed scale; the simulated preview is linear at 1x
+          const gl = 1;
           const wy = y0 + 19, wh = th1;
           waveScroll(c, th, x + 4, wy, w - 8, wh, st.hist, "inE", greyFill(), gl);
           waveScroll(c, th, x + 4, wy, w - 8, wh, st.hist, "outE", th.orange, gl);
           waveScroll(c, th, x + 4, wy, w - 8, wh, st.hist, "dE", th.cyan, gl);
           legend(c, th, x + 6, y0 + 12, [[greyFill(), "In", "The grey shape is the level of the signal going into the effect over the last seconds."], [th.orange, "Out", "The orange shape is the level of the effect output."], [th.cyan, "Diff", "The cyan shape is the difference between output and input: what the effect changed."]]);
-          if (!st.live) { txt(c, x + 130, y0 + 12, zoomText(gl), { color: th.dispText, align: "left", size: 8.5 }); hint(x + 128, y0 + 2, 60, 14, "Zoom", "The level shapes are enlarged so the loudest part fills the plot. The number says by how much."); }
           hint(x + 4, wy, w - 8, wh, "Level History", "Loudness over time, newest at the right. Grey: input. Orange: output. Cyan: the difference. Measured from the input and output audio.");
           rtxt(c, x + w - 6, y0 + 12, `Δ ${st.dRms < 1e-4 ? "< -80" : db(st.dRms).toFixed(0)} dB`, th.dispText, "Difference Readout", "Level of the difference between output and input, in dB. Lower means the effect changes less.");
           strip(c, th, x, wy + wh + 1, w, 0, true);

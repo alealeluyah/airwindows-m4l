@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -827,7 +807,7 @@ function makeCanvas(mg, opts) {
       s.si[i] = Math.max(clamp(fin((m.specIn || [])[i], -120), -120, 6), (s.si[i] === undefined ? -120 : s.si[i]) - 24 * dt);
       s.so[i] = Math.max(clamp(fin((m.specOut || [])[i], -120), -120, 6), (s.so[i] === undefined ? -120 : s.so[i]) - 24 * dt);
     }
-    // scope: left channel, 64 samples; scope() zooms it with fit()
+    // scope: left channel, 64 samples; scope() draws it at true level (1x)
     const sc = s.sc; sc.i = []; sc.o = [];
     for (let k = 0; k < n; k++) { sc.i.push(fin(iL[k], 0)); sc.o.push(fin(oL[k], 0)); }
   }
@@ -945,18 +925,17 @@ function makeCanvas(mg, opts) {
     const s = st.fx, d = s.live ? { env: 0 } : dr(st.t);
     screen(c, th, x, y, w, h);
     strip(c, th, x, y, w, 22);                                 // top strip: menu and readouts (drawn by the caller)
-    const by = strip(c, th, x, y + h - 16, w, 16, true);       // bottom strip: legend and zoom
+    const by = strip(c, th, x, y + h - 16, w, 16, true);       // bottom strip: legend
     hint(x, y + 22, w, h - 38, "Scope Display", "Top: the input and output waveforms on top of each other. Bottom: how much louder or quieter the output is than the input over time. Measured from input and output.");
     const gh = 34, gy = y + h - 16 - 5 - gh;                   // level-change lane
     const wy = y + 26, wh = gy - 16 - 3 - wy, mid = wy + wh / 2, amp = wh / 2 - 1;
-    // samples of the two waveforms (before zoom), in the range -1..1
+    // samples of the two waveforms in the range -1..1
     const f = xx => (0.25 + 0.75 * d.env) * 0.95 * Math.sin((xx / w * 2.5 + st.t * 0.6) * 6.283) + 0.2 * d.env * Math.sin((xx / w * 7.5 + st.t * 1.1) * 6.283);
     let ai, ao;
     if (s.live) { ai = s.sc.i; ao = s.sc.o; }
     else { ai = []; ao = []; for (let i = 0; i <= w; i += 2) { ai.push(clamp(f(i), -1, 1)); ao.push(clamp(s.shape(f(i)), -1.3, 1.3) / 1.3); } }
-    // RUBRIC 2.6: input and output share one zoom
-    const pk = Math.max(ai.reduce((m, v) => Math.max(m, Math.abs(v)), 0), ao.reduce((m, v) => Math.max(m, Math.abs(v)), 0));
-    const g = fit(s, "scope", pk);
+    // RUBRIC 2.6: fixed scale, true level (1x): full scale = plot half-height
+    const g = 1;
     c.save(); c.beginPath(); c.rect(x, wy - 2, w, wh + 4); c.clip();
     c.fillStyle = th.dline; c.fillRect(x + 3, mid, w - 6, 1);
     const px = (j, n) => x + 4 + (w - 8) * j / Math.max(1, n - 1);
@@ -965,7 +944,7 @@ function makeCanvas(mg, opts) {
     c.strokeStyle = th.cyan; c.lineWidth = 2; c.beginPath();
     ao.forEach((v, j) => { const yy = mid - clamp(v * g, -1, 1) * amp; j ? c.lineTo(px(j, ao.length), yy) : c.moveTo(px(j, ao.length), yy); }); c.stroke();
     c.restore();
-    // level-change history (dB, fixed scale: no zoom)
+    // level-change history (dB, fixed scale)
     strip(c, th, x, gy - 16, w, 16, true);
     c.save();
     c.fillStyle = th.meterBg; c.fillRect(x + 6, gy, w - 12, gh);
@@ -978,11 +957,6 @@ function makeCanvas(mg, opts) {
     c.restore();
     hint(x + 4, wy, w - 8, wh, "Waveform Area", "The input and output signals, drawn over each other for a short moment. Where the lines differ, the effect changed the sound.");
     legend(c, th, x + 8, by, [[th.dispText, "In", "Grey line: the waveform going into the effect."], [th.cyan, "Out", "Cyan line: the waveform coming out of the effect."], [th.orange, "Change", "Orange line (lane below the waveform): output level minus input level over time."]], { line: true });
-    const zt = zoomText(g);
-    if (zt) {
-      txt(c, x + w - 8, by, zt, { color: th.dispText, size: 8.5, align: "right" });
-      hint(x + w - 70, y + h - 15, 66, 13, "Zoom", "The waveforms are enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share it.");
-    }
     hint(x + 6, gy, w - 12, gh, "Level Change Strip", "The orange line shows output level minus input level, now at the right edge. Above the middle line the effect is louder, below it is quieter. Range +12 to -12 dB.");
     hint(x + w - 80, gy - 14, 74, 12, "Level Change", "Output level minus input level right now, in dB. Measured from the input and output RMS levels.");
     txt(c, x + 8, gy - 5, "Level change (Out − In)", { color: th.scale, size: 8.5, align: "left" });

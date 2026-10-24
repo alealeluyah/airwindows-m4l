@@ -270,29 +270,9 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
-// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
-// The state lives on `holder` under `key`, so each plot keeps its own zoom.
-function fit(holder, key, peak, target = 0.9) {
-  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
-  const k = "_fit_" + key, g = holder[k] || want;
-  holder[k] = want < g ? want : g + (want - g) * 0.03;
-  return holder[k];
-}
-// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
-function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
-// peak of numeric fields `keys` over the newest n entries of a history
-function histPeak(hist, keys, n) {
-  let p = 0;
-  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
-  return p;
-}
-
-// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
-// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
-function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+// Scrolling waveform, newest on the right, at its true level (`gain` 1 unless given).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain = 1) {
   const n = Math.min(hist.length, w);
-  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
@@ -770,13 +750,9 @@ function makeCanvas(mg, opts) {
   }
   function clipTo(c, x, y, w, h) { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); }
   function dispHead(c, th, dx, dy, name) { menu(c, th, dx + 6, dy + 4, 100, name); arrows(c, th, dx + 110, dy + 4); }
-  // zoom tag in a screen strip (RUBRIC 2.6): text only when zoomed, hint always
-  function zoomTag(c, th, x, y, g) {
-    txt(c, x, y, zoomText(g), { color: th.dispText, align: "left", size: 8.5 });
-    hint(x - 2, y - 10, 70, 13, "Zoom", "The picture is enlarged so its loudest point fills the plot. The number says by how much; a quiet signal gets a larger zoom.");
-  }
-  // loudest absolute value over the newest n samples of several arrays
-  function absPeak(arrs, n) { let p = 0; for (const a of arrs) for (let i = Math.max(0, a.length - n); i < a.length; i++) p = Math.max(p, Math.abs(a[i])); return p; }
+  // Fixed magnification of the difference wave (output minus input). The difference is tiny, so it is drawn
+  // 16x (+24 dB) larger than the true level; chosen for typical material, never computed from the signal.
+  const DIFF_GAIN = 16;
   function ctl(c, th, ps, area, cols, vals, cw) {
     tile(c, th, area.x, area.y, area.w, area.h);
     if (!ps.length) { txt(c, area.x + area.w / 2, area.y + area.h / 2 + 3, "No controls", { color: th.dim }); return; }
@@ -786,7 +762,7 @@ function makeCanvas(mg, opts) {
   const M = 120, SQ = Math.SQRT1_2;
   const proc = v => v + 0.05 * v * v * v + 0.018 * (v * v - 0.2);
   function stepSub(st, dt) {
-    if (!st.xl) { st.xl = []; st.xr = []; st.yl = []; st.yr = []; st.ph = 0; st.cnt = 0; st.rpk = 0.02; st.gain = 16; st.nul = -30; st.rmsI = -20; st.cI = 0.8; st.cO = 0.8;
+    if (!st.xl) { st.xl = []; st.xr = []; st.yl = []; st.yr = []; st.ph = 0; st.cnt = 0; st.nul = -30; st.rmsI = -20; st.cI = 0.8; st.cO = 0.8;
       st.mI = -20; st.mO = -20; st.sI = -26; st.sO = -26; st.sp = Array(NB).fill(-90); st.rp = Array(NB).fill(-90); st.peakBin = 60; st.prev = 0; }
     const d = drums(st.t), amp = 0.12 + 0.7 * Math.pow(d.env, 0.8);
     for (let k = 0; k < 6; k++) {
@@ -803,9 +779,6 @@ function makeCanvas(mg, opts) {
     const res = st.yl.map((v, i) => v - st.xl[i]);
     const rI = db(rms(st.xl)), rR = db(rms(res));
     st.rmsI = rI; st.nul += ((rR - rI) - st.nul) * 0.25;
-    st.rpk = Math.max(pk(res), st.rpk * 0.997);
-    const tg = clamp(Math.pow(2, Math.floor(L2(0.8 / Math.max(st.rpk, 1e-4)))), 1, 128);
-    if (tg !== st.gain && (tg > st.gain * 1.9 || tg < st.gain * 0.9)) st.gain = tg;
     const corr = (a, b) => { let s = 0, p = 0, q = 0; for (let i = 0; i < a.length; i++) { s += a[i] * b[i]; p += a[i] * a[i]; q += b[i] * b[i]; } return s / Math.sqrt(p * q + 1e-9); };
     st.cI += (corr(st.xl, st.xr) - st.cI) * 0.3; st.cO += (corr(st.yl, st.yr) - st.cO) * 0.3;
     const mid = (a, b) => a.map((v, i) => (v + b[i]) / 2), sid = (a, b) => a.map((v, i) => (v - b[i]) / 2);
@@ -829,7 +802,7 @@ function makeCanvas(mg, opts) {
     return o;
   };
   function liveSub(st, m, dt) {
-    if (!st.lv) { st.lv = true; st.xl = []; st.xr = []; st.yl = []; st.yr = []; st.rpk = 0.01; st.gain = 16; st.nul = -60; st.rmsI = -60; st.cI = 1; st.cO = 1;
+    if (!st.lv) { st.lv = true; st.xl = []; st.xr = []; st.yl = []; st.yr = []; st.nul = -60; st.rmsI = -60; st.cI = 1; st.cO = 1;
       st.mI = -120; st.mO = -120; st.sI = -120; st.sO = -120; st.sp = Array(NB).fill(-90); st.rp = Array(NB).fill(-90); st.peakBin = -1; }
     const sm = (p, v, k) => p + (fin(v, -120) - p) * k;
     // scopes: about 5 ms of input and output samples, both channels
@@ -838,10 +811,6 @@ function makeCanvas(mg, opts) {
     if (n >= 16) {
       const cl = v => clamp(fin(v, 0), -1.5, 1.5);
       st.xl = a.slice(0, n).map(cl); st.xr = b.slice(0, n).map(cl); st.yl = c2.slice(0, n).map(cl); st.yr = d2.slice(0, n).map(cl);
-      let dp = 0; for (let i = 0; i < n; i++) dp = Math.max(dp, Math.abs(st.yl[i] - st.xl[i]));
-      st.rpk = Math.max(dp, st.rpk * 0.95);
-      const tg = clamp(Math.pow(2, Math.floor(L2(0.8 / Math.max(st.rpk, 1e-4)))), 1, 128);
-      if (tg !== st.gain && (tg > st.gain * 1.9 || tg < st.gain * 0.9)) st.gain = tg;
     }
     // residual level relative to the input (null test), from the RMS of out - in
     st.rmsI = sm(st.rmsI, m.inRmsDb, 0.3);
@@ -873,7 +842,7 @@ function makeCanvas(mg, opts) {
     options: [
       { id: "A", name: "Difference scope", short: "Null test", width: 638, step: stepSub, live: liveSub,
         why: "Input and output waves on top of each other, with the small difference between them drawn large underneath — a live null test.",
-        bullets: ["Driven by output minus input samples (null test), auto-magnified by powers of two", "Readout: residual level in dB below the input, and the magnification used", "Dials in a block on the left (up to 7 fit)"],
+        bullets: ["Driven by output minus input samples (null test), difference drawn at a fixed ×16 magnification", "Readout: residual level in dB below the input; the difference lane is labelled ×16", "Dials in a block on the left (up to 7 fit)"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
           ctl(c, th, ps, { x: 4, y: HEAD_H + 4, w: 160, h: DEVICE_H - 8 }, 2, vals);
@@ -883,10 +852,10 @@ function makeCanvas(mg, opts) {
           legend(c, th, dx + dw - 140, dy + 15, [
             [th.dispText, "In", "Thick grey wave: the sound going into the effect."],
             [th.cyan, "Out", "Thin cyan wave: the sound coming out of the effect. It lies almost on top of the grey wave."],
-            [th.orange, "Difference", "Orange wave in the lower panel: output minus input, enlarged so you can see it. A flat line means the effect changed nothing."]], { line: true });
+            [th.orange, "Difference", "Orange wave in the lower panel: output minus input, drawn 16 times larger (fixed) so you can see it. A flat line means the effect changed nothing."]], { line: true });
           hint(dx, dy, dw, dh, "Null Test Display", "Subtracts the input from the output, so you see only what the effect changed. Measured from the input and output samples.");
           hint(dx + 8, dy + 25, dw - 16, 51, "Input And Output Waves", "A few milliseconds of the input (grey) and the output (cyan), drawn on top of each other.");
-          hint(dx + 8, dy + 81, dw - 16, 58, "Difference Wave", "Output minus input, enlarged by the factor shown in the panel. The bigger the wave, the more the effect changes the sound.");
+          hint(dx + 8, dy + 81, dw - 16, 58, "Difference Wave", "Output minus input, drawn 16 times larger than the true level (a fixed magnification, not adjusted to the signal). The bigger the wave, the more the effect changes the sound.");
           hint(dx + 6, dy + dh - 15, 190, 12, "Residual Readout", "How loud the difference is compared with the input, in dB. A lower number means a more subtle effect.");
           hint(dx + dw - 150, dy + dh - 15, 142, 12, "Input Level Readout", "Average (RMS) level of the input, in dB.");
           const wx = dx + 8, ww = dw - 16, wy = dy + 25, wh = 51, ry = dy + 81, rh = 58;
@@ -894,16 +863,16 @@ function makeCanvas(mg, opts) {
           c.fillStyle = th.dline; c.fillRect(wx, wy + wh / 2, ww, 1); c.fillRect(wx, ry + rh / 2, ww, 1);
           if (!st.xl || st.xl.length < 16) return;
           const M = st.xl.length;
-          // auto zoom (RUBRIC 2.6): input and output share one zoom; the difference keeps its own ×N
-          const g = fit(st, "scope", absPeak([st.xl, st.yl], M)); zoomTag(c, th, dx + 148, dy + 15, g);
+          // fixed scale (RUBRIC 2.6): input and output at true level, 1x
+          const g = 1;
           const line = (b, mid, hh, k, col, lw) => { c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = mid - b(i) * k * hh; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
             c.strokeStyle = col; c.lineWidth = lw; c.stroke(); };
           clipTo(c, wx, wy, ww, wh);
           line(i => st.xl[i], wy + wh / 2, wh, 0.5 * g, th.dispText, 3); line(i => st.yl[i], wy + wh / 2, wh, 0.5 * g, th.cyan, 1.3);
           c.restore(); clipTo(c, wx, ry, ww, rh);
-          line(i => st.yl[i] - st.xl[i], ry + rh / 2, rh, 0.46 * st.gain, th.orange, 1.8);
+          line(i => st.yl[i] - st.xl[i], ry + rh / 2, rh, 0.46 * DIFF_GAIN, th.orange, 1.8);
           c.restore();
-          txt(c, wx + 4, ry + 9, `Difference ×${st.gain} (+${(20 * Math.log10(st.gain)).toFixed(0)} dB)`, { color: th.orange, size: 8.5, align: "left" });
+          txt(c, wx + 4, ry + 9, `Difference ×${DIFF_GAIN} (+${(20 * Math.log10(DIFF_GAIN)).toFixed(0)} dB, fixed)`, { color: th.orange, size: 8.5, align: "left" });
           txt(c, dx + 10, dy + dh - 5, `Residual ${st.nul.toFixed(1)} dB re input`, { color: th.orange, align: "left" });
           txt(c, dx + dw - 8, dy + dh - 5, `Input ${st.rmsI.toFixed(1)} dB RMS`, { color: th.dispText, align: "right" });
         } },
@@ -976,9 +945,8 @@ function makeCanvas(mg, opts) {
           c.fillStyle = th.dline; c.fillRect(rx + 32 + rw / 2, dy + 37, 1, 20);
           if (!st.xl || st.xl.length < 16) return;
           const M = st.xl.length;
-          // auto zoom (RUBRIC 2.6): in and out share one zoom so the cloud fills the scope
-          let vp = 0; for (let i = 0; i < M; i++) for (const [a, b] of [[st.xl, st.xr], [st.yl, st.yr]]) vp = Math.max(vp, Math.abs(a[i] - b[i]) * SQ, Math.abs(a[i] + b[i]) * SQ);
-          const g = fit(st, "vec", vp); zoomTag(c, th, dx + 148, dy + 15, g);
+          // fixed scale (RUBRIC 2.6): true level, 1x
+          const g = 1;
           clipTo(c, sx, sy, sz, sz);
           [[st.xl, st.xr, th.dispText], [st.yl, st.yr, th.cyan]].forEach(([a, b, col]) => { c.fillStyle = col;
             for (let i = 0; i < M; i++) c.fillRect(cx + (a[i] - b[i]) * SQ * g * sz * 0.5 - 1, cy - (a[i] + b[i]) * SQ * g * sz * 0.5 - 1, 2, 2); });

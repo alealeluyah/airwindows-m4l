@@ -39,7 +39,7 @@ themes (dark and light) and in every view.
 | 2.3 | Readouts that belong to the measurement (Gain, Peak, Decay time …) and the legend go in a **strip** at the top or bottom of the screen, never floating over the plot. | Strip separated by a 1 px `th.dline` line. |
 | 2.4 | Values in a screen: grey label (`th.dispText`), coloured value (cyan for "now"/output, orange for change/reduction). | Same pair everywhere. |
 | 2.5 | Plot data never touches the screen edge: 3 px inner padding; grid lines `th.dline`. | Measure. |
-| 2.6 | Waveforms and scopes **auto-zoom**: the loudest visible point fills ~90 % of the plot height (`fit()`, 1×–32×). Curves that share a plot (dry/wet, in/out) share one zoom. When zoomed, the strip shows `zoomText()` ("Zoom +12 dB"). Level displays in dB (meters, spectra, decay) do not zoom: their scale is fixed and labelled. | A quiet test signal still fills ≥ 70 % of the plot height. |
+| 2.6 | Waveforms and scopes use a **fixed scale** (true level, 1×): no automatic zoom. A quiet signal looks quiet. | No "Zoom" readout anywhere. |
 
 ## 3. Buttons and menus
 
