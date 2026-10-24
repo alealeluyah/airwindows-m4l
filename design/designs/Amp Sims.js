@@ -6,11 +6,9 @@
   const cl = (v, a, b) => Math.max(a, Math.min(b, v));
   const greyFill = () => S.theme === "light" ? "#6e6e6e" : "#4a4a4a";
   const greyLine = () => S.theme === "light" ? "#5e5e5e" : "#8c8c8c";
-  const box = (c, th, x, y, w, h) => rr(c, x, y, w, h, 3, th.display);
-  function ctl(c, th, ps, area, cols, vals, cellW) {
+    function ctl(c, th, ps, area, cols, vals, cellW) {
     if (!ps.length) {
-      rr(c, area.x, area.y, area.w, Math.min(area.h, 60), 3, th.panel);
-      txt(c, area.x + area.w / 2, area.y + Math.min(area.h, 60) / 2 + 3, "No controls", { color: th.dim });
+      txt(c, area.x + area.w / 2, area.y + 30, "No controls", { color: th.dim });
     } else if (ps.length > cols) {
       if (ps.length <= 2 * cols) cols = Math.ceil(ps.length / 2);                    // rows with a clear gap, so a value never touches the next label
       const rows = Math.ceil(ps.length / cols), pitch = Math.min(60, area.h / rows), y0 = area.y + (area.h - rows * pitch) / 2 + (pitch - 50) / 2;
@@ -43,7 +41,6 @@
   const fk = f => f >= 1000 ? (f / 1000) + "k" : String(f);
   // spectrum display: grey fill = input, orange line = output, log frequency axis
   function spec(c, th, x, y, w, h, fin, fout, f0, f1, dTop, dBot, ticks) {
-    box(c, th, x, y, w, h);
     const lg = Math.log(f1 / f0), ly = d => y + h * cl((dTop - d) / (dTop - dBot), 0, 1);
     c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
     ticks.forEach(f => { c.fillStyle = th.dline; c.fillRect(Math.round(x + w * Math.log(f / f0) / lg), y, 1, h); });
@@ -180,9 +177,13 @@
                   "Measured: size of harmonics 1–10 (simulated: DFT of the output; real audio: energy the amp added at multiples of the strongest low band, so tone changes also count), with THD readout",
                   "Menu, arrows and all dials at the right"],
         draw(c, th, st, ps, vals) {
-          const x0 = 6, y0 = HEAD_H + 4, w0 = 150, h0 = DEVICE_H - 8;
-          box(c, th, x0, y0, w0, h0);
-          const px = x0 + 8, py = y0 + 18, pw = w0 - 16, ph = h0 - 36;
+          const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+          // screen 1: transfer curve (title + legend in the top strip, levels in the bottom strip)
+          const x0 = 4, w0 = 150;
+          screen(c, th, x0, y0, w0, H);
+          strip(c, th, x0, y0, w0, 18);
+          strip(c, th, x0, y0 + H - 16, w0, 16, true);
+          const px = x0 + 6, py = y0 + 21, pw = w0 - 12, ph = H - 21 - 19;
           c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
           if (st.live) {                       // real audio: plot range follows the signal (+-R), so the curve fills the box
             const hb = pw * st.A / (2 * st.R);
@@ -208,24 +209,30 @@
                       [th.scale, "Even", "The grey diagonal is the no-change line, where the output equals the input. Where the orange curve leaves it, the amp adds distortion."]];
           legend(c, th, x0 + w0 - 6 - lgW(c, tl), y0 + 12, tl);
           hint(px, py, pw, ph, "Transfer Curve", `Output level against input level, measured from the input and output audio.${st.live ? ` The plot edge is ${db(st.R).toFixed(0)} dBFS and follows the signal.` : ""} The farther the orange curve bends from the grey diagonal, the more the amp distorts.`);
-          ltxt(c, x0 + 6, y0 + h0 - 5, `In ${db(st.A).toFixed(1)} dB`, th.dispText, "Input Level Readout", "Peak level of the input signal now, in dB. Measured before the amp effect.");
-          rtxt(c, x0 + w0 - 6, y0 + h0 - 5, `Out ${db(st.live ? st.outA : Math.abs(proc(st.A, st.drive, 0.25))).toFixed(1)} dB`, th.dispText, "Output Level Readout", "Peak level of the amp output now, in dB. Measured after the amp effect.");
+          ltxt(c, x0 + 6, y0 + H - 5, `In ${db(st.A).toFixed(1)} dB`, th.dispText, "Input Level Readout", "Peak level of the input signal now, in dB. Measured before the amp effect.");
+          rtxt(c, x0 + w0 - 6, y0 + H - 5, `Out ${db(st.live ? st.outA : Math.abs(proc(st.A, st.drive, 0.25))).toFixed(1)} dB`, th.dispText, "Output Level Readout", "Peak level of the amp output now, in dB. Measured after the amp effect.");
 
-          const hx = 162, hw = 150;
-          box(c, th, hx, y0, hw, h0);
+          // screen 2: harmonics (title + THD + legend in the top strip, bar numbers in the bottom strip)
+          const hx = 156, hw = 150;
+          screen(c, th, hx, y0, hw, H);
+          strip(c, th, hx, y0, hw, 30);
+          strip(c, th, hx, y0 + H - 16, hw, 16, true);
           txt(c, hx + 6, y0 + 12, "Harmonics", { color: th.scale, align: "left" });
           rtxt(c, hx + hw - 6, y0 + 12, `THD ${st.thd.toFixed(1)}%`, th.dispText, "THD Readout", "Total harmonic distortion: how strong the added overtones are, as a percent of the main tone. Higher means a more distorted sound. Measured from the output.");
           legend(c, th, hx + 6, y0 + 25, [[th.cyan, "Tone", "Cyan bar 1 is the main tone. It sets the 0 dB reference for the other bars."], [th.orange, "Added", "Orange bars 2 to 10 are overtones (harmonics) the amp adds. Taller bars mean more of that overtone."]]);
-          const by = y0 + h0 - 16, bh = h0 - 47;
+          const by = y0 + H - 19, bh = H - 19 - 35;
           [0, -20, -40, -60].forEach(g => { const yy = by - bh * (-g / 60 > 1 ? 1 : 1 - (-g / 60)); c.fillStyle = th.dline; c.fillRect(hx + 4, Math.round(yy), hw - 8, 1); });
           st.h.forEach((v, k) => {
             const f = cl(1 + db(v) / 60, 0, 1), bx = hx + 8 + k * 14;
             c.fillStyle = k === 0 ? th.cyan : th.orange; c.fillRect(bx, by - bh * f, 10, bh * f);
-            txt(c, bx + 5, y0 + h0 - 5, String(k + 1), { color: th.dispText, size: 8.5 });
+            txt(c, bx + 5, y0 + H - 5, String(k + 1), { color: th.dispText, size: 8.5 });
           });
-          hint(hx, y0, hw, h0, "Harmonics Display", `Bars for the first 10 harmonics (overtones) of the main tone, from 0 dB down to -60 dB. ${st.live ? "Measured from the energy the amp added at multiples of the strongest low band." : "Measured from the output of the simulated amp."}`);
-          menu(c, th, 320, HEAD_H + 4, 130, "ChimeyGuitar"); arrows(c, th, 456, HEAD_H + 4);
-          ctl(c, th, ps, { x: 322, y: HEAD_H + 22, w: 304, h: 146 }, 5, vals, 60);
+          hint(hx, y0, hw, H, "Harmonics Display", `Bars for the first 10 harmonics (overtones) of the main tone, from 0 dB down to -60 dB. ${st.live ? "Measured from the energy the amp added at multiples of the strongest low band." : "Measured from the output of the simulated amp."}`);
+
+          // dial tile: menu and arrows on the top row, dials below
+          tile(c, th, 308, y0, 322, H);
+          menu(c, th, 312, y0 + 4, 130, "ChimeyGuitar"); arrows(c, th, 446, y0 + 4);
+          ctl(c, th, ps, { x: 312, y: y0 + 22, w: 314, h: H - 26 }, 5, vals, 60);
         } },
 
       { id: "B", name: "Spectrum", short: "Spectrum", width: 600, step, live: liveInit,
@@ -234,51 +241,63 @@
                   "Readouts: input peak level and gain of the output over the input",
                   "Menu and arrows inside the display, dials in one row below"],
         draw(c, th, st, ps, vals) {
-          const x = 6, y = HEAD_H + 6, w = 588;
-          box(c, th, x, y, w, 96);
-          if (st.live) spec(c, th, x, y + 22, w, 74, f => bandAt(st.sIn, f), f => bandAt(st.sOut, f), 40, 12000, 6, -90, [100, 1000, 10000]);
-          else spec(c, th, x, y + 22, w, 74, f => L(st, f, false), f => L(st, f, true), 40, 12000, 6, -66, [100, 1000, 10000]);
-          menu(c, th, x + 6, y + 5, 120, "ChimeyGuitar"); arrows(c, th, x + 130, y + 5);
+          const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+          const x = 4, y = y0, w = 594;
+          screen(c, th, x, y, w, 98);
+          strip(c, th, x, y, w, 22);
+          if (st.live) spec(c, th, x + 3, y + 22, w - 6, 73, f => bandAt(st.sIn, f), f => bandAt(st.sOut, f), 40, 12000, 6, -90, [100, 1000, 10000]);
+          else spec(c, th, x + 3, y + 22, w - 6, 73, f => L(st, f, false), f => L(st, f, true), 40, 12000, 6, -66, [100, 1000, 10000]);
+          menu(c, th, x + 6, y + 3, 120, "ChimeyGuitar"); arrows(c, th, x + 130, y + 3);
           rtxt(c, x + w - 8, y + 15, `Peak ${db(st.A).toFixed(1)} dB`, th.dispText, "Input Peak Readout", "Highest level of the input signal now, in dB. Measured before the amp effect.");
           rtxt(c, x + w - 78, y + 15, `Gain ${db(st.gain) >= 0 ? "+" : ""}${db(st.gain).toFixed(1)} dB`, th.dispText, "Gain Readout", "How much louder (+) or quieter (-) the output is than the input, in dB. Measured from the input and output levels.");
           legend(c, th, x + 172, y + 15, [[greyFill(), "Input", "The grey area is the spectrum of the signal going into the amp: how loud each frequency is."], [th.orange, "Output", "The orange line is the spectrum of the amp output. Where it rises above the grey area, the amp added tone or harmonics."]]);
-          hint(x, y + 22, w, 74, "Spectrum Display", "Level at each frequency, from 40 Hz to 12 kHz (left to right) and from loud to quiet (top to bottom). Measured from the input and output audio.");
-          ctl(c, th, ps, { x: 6, y: HEAD_H + 106, w: 588, h: DEVICE_H - 108 }, 10, vals, 58);
+          hint(x, y + 22, w, 76, "Spectrum Display", "Level at each frequency, from 40 Hz to 12 kHz (left to right) and from loud to quiet (top to bottom). Measured from the input and output audio.");
+          tile(c, th, x, y0 + 100, w, H - 100);
+          ctl(c, th, ps, { x: x, y: y0 + 102, w: w, h: H - 104 }, 10, vals, 58);
         } },
 
       { id: "C", name: "Scope", short: "Scope", width: 632, step, live: liveInit,
         why: "A zoomed oscilloscope lays the output over the input so flattened peaks show at once, with meters for the added signal — like Roar and Drum Buss.",
-        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms auto-scaled, lines mark the scale",
+        bullets: ["Measured: waveform of input (cyan) and output (orange); real audio shows the last few ms, auto-zoomed so the loudest point fills the plot (the strip shows the zoom)",
                   "Readouts: THD and crest factor in and out; meters for In, Out and the difference (added signal)",
                   "Menu on top, dials at the right"],
         draw(c, th, st, ps, vals) {
-          menu(c, th, 6, HEAD_H + 4, 120, "ChimeyGuitar"); arrows(c, th, 130, HEAD_H + 4);
-          ltxt(c, 170, HEAD_H + 15, `THD ${st.thd.toFixed(1)} %    Crest ${st.crIn.toFixed(1)} \u2192 ${st.crOut.toFixed(1)} dB`, th.text, "THD and Crest Readout", "THD is how strong the added overtones are, in percent. Crest is the gap between peak and average level, input then output, in dB. A lower crest on the output means flattened peaks.");
-          const x = 6, y = HEAD_H + 24, w = 250, h = 141, mid = y + h / 2, sc = h * 0.29;
-          box(c, th, x, y, w, h);
-          c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-          [-1, 0, 1].forEach(v => { c.fillStyle = v ? th.scale : th.dline; c.fillRect(x, Math.round(mid - v * sc), w, 1); });
-          const a = [], b = [];
+          const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+          // screen: scope with legend + zoom in the top strip, THD and crest in the bottom strip
+          const x = 4, w = 252;
+          screen(c, th, x, y0, w, H);
+          strip(c, th, x, y0, w, 18);
+          strip(c, th, x, y0 + H - 16, w, 16, true);
+          const px = x + 3, pw = w - 6, py = y0 + 20, ph = H - 20 - 19, mid = py + ph / 2, hh = ph / 2;
+          const a = [], b = [], av = [], bv = [];
           const at = (arr, u) => { const q = u * 63, i = Math.min(62, Math.floor(q)), t = q - i; return arr[i] * (1 - t) + arr[i + 1] * t; };
-          for (let px = 0; px <= w - 8; px += 2) {
-            if (st.live) {                  // real audio: last measured samples, auto-scaled so +-1 line = peak hold
-              const u = px / (w - 8);
-              a.push([x + 4 + px, mid - at(st.sc.i, u) / st.scFull * sc]); b.push([x + 4 + px, mid - at(st.sc.o, u) / st.scFull * sc]);
-              continue;
-            }
-            const xi = st.A * Math.sin(TAU * (px / (w - 8) * 2.5 + st.t * 0.4));
-            a.push([x + 4 + px, mid - xi * sc]); b.push([x + 4 + px, mid - proc(xi, st.drive, 0.25) * sc]);
+          for (let q = 0; q <= pw; q += 2) {
+            if (st.live) { av.push(at(st.sc.i, q / pw)); bv.push(at(st.sc.o, q / pw)); continue; }
+            const xi = st.A * Math.sin(TAU * (q / pw * 2.5 + st.t * 0.4));
+            av.push(xi); bv.push(proc(xi, st.drive, 0.25));
           }
+          // one zoom for input and output (RUBRIC 2.6)
+          const g = fit(st, "scope", Math.max(...av.map(Math.abs), ...bv.map(Math.abs)));
+          av.forEach((v, i) => { a.push([px + i * 2, mid - v * g * hh]); b.push([px + i * 2, mid - bv[i] * g * hh]); });
+          c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
+          [-0.5, 0, 0.5].forEach(v => { c.fillStyle = th.dline; c.fillRect(px, Math.round(mid - v * hh), pw, 1); });
           line(c, a, th.cyan, 1.2); line(c, b, th.orange, 2);
           c.restore();
-          legend(c, th, x + 6, y + 12, [[th.cyan, "In", "The cyan wave is the signal going into the amp."], [th.orange, "Out", "The orange wave is the amp output. Flat tops on it mean the amp is clipping the peaks."]], { line: true });
-          hint(x, y, w, h, "Scope Display", "Shape of the input and output waves over a few milliseconds. Measured from the input and output audio, scaled to fit.");
-          rtxt(c, x + w - 6, y + 12, st.live ? `lines at \u00b1${db(st.scFull).toFixed(0)} dBFS` : "full scale", th.scale, "Scale Lines", "The top and bottom lines mark the loudest level the display can show. In live mode the scale follows the signal.");
-          txt(c, 268, HEAD_H + 36, "Δ", { color: th.text, size: 10 });
-          hint(258, HEAD_H + 28, 20, 138, "Added Signal Meter", "How loud the difference between output and input is, in dB. It shows how much the amp added or removed. Measured from the input and output audio.");
-          meterV(c, th, 263, HEAD_H + 42, 10, 100, fl(db(st.dRms)), false, th.orange);
-          txt(c, 268, HEAD_H + 154, `${db(st.dRms).toFixed(0)}`, { color: th.text, size: 8.5 });
-          ctl(c, th, ps, { x: 284, y: HEAD_H + 22, w: 340, h: 146 }, 5, vals, 62);
+          legend(c, th, x + 6, y0 + 12, [[th.cyan, "In", "The cyan wave is the signal going into the amp."], [th.orange, "Out", "The orange wave is the amp output. Flat tops on it mean the amp is clipping the peaks."]], { line: true });
+          hint(px, py, pw, ph, "Scope Display", "Shape of the input and output waves over a few milliseconds. Measured from the input and output audio. The thin lines mark half of the plot height.");
+          txt(c, x + w - 6, y0 + 12, zoomText(g), { color: th.dispText, align: "right", size: 8.5 });
+          hint(x + w - 80, y0 + 2, 76, 14, "Zoom", "The waves are enlarged so the loudest point fills the plot. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom, so they stay comparable.");
+          ltxt(c, x + 6, y0 + H - 5, `THD ${st.thd.toFixed(1)} %   Crest ${st.crIn.toFixed(1)} → ${st.crOut.toFixed(1)} dB`, th.dispText, "THD and Crest Readout", "THD is how strong the added overtones are, in percent. Crest is the gap between peak and average level, input then output, in dB. A lower crest on the output means flattened peaks.");
+          // tile: difference meter
+          tile(c, th, 258, y0, 26, H);
+          txt(c, 271, y0 + 16, "Δ", { color: th.text, size: 10 });
+          hint(258, y0, 26, H, "Added Signal Meter", "How loud the difference between output and input is, in dB. It shows how much the amp added or removed. Measured from the input and output audio.");
+          meterV(c, th, 266, y0 + 24, 10, H - 52, fl(db(st.dRms)), false, th.orange);
+          txt(c, 271, y0 + H - 10, `${db(st.dRms).toFixed(0)}`, { color: th.text, size: 8.5 });
+          // dial tile
+          tile(c, th, 286, y0, 344, H);
+          menu(c, th, 290, y0 + 4, 120, "ChimeyGuitar"); arrows(c, th, 414, y0 + 4);
+          ctl(c, th, ps, { x: 290, y: y0 + 22, w: 336, h: H - 26 }, 5, vals, 62);
         } },
     ],
   };

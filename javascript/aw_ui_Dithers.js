@@ -19,16 +19,40 @@ const HEAD_H = 18;      // device title bar
 function tok() {
   const t = S.themes[S.theme];
   const light = S.theme === "light";
-  return {
-    body: t.DetailViewBackground, text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
+  const th = {
+    // structure (design/RUBRIC.md): tiles on a lighter background, 2 px gutters between them
+    gutter: t.SurfaceHighlight, tile: t.SurfaceBackground, divider: light ? "#8a8a8a" : "#262626",
+    body: t.SurfaceHighlight, panel: t.SurfaceBackground,
+    text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
     display: t.RetroDisplayBackground, dline: t.RetroDisplayBackgroundLine,
     orange: t.RetroDisplayForeground, cyan: t.RetroDisplayForeground2, arc: t.RangeDefault,
     track: light ? "#8f8f8f" : "#1e1e1e", needle: light ? "#121212" : "#d9d9d9",
     ctrlBg: t.ControlBackground, frame: light ? "#4f4f4f" : "#111111", on: t.ViewControlOn,
     meterBg: t.MeterBackground, scale: t.RetroDisplayScaleText.slice(0, 7), title: t.RetroDisplayTitle,
-    dispText: light ? "#cfcfcf" : "#b5b5b5", panel: light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)",
+    dispText: light ? "#cfcfcf" : "#b5b5b5",
     green: "#1ec15a", greenDim: "#0f6b33",
   };
+  // in the device: the user's own Live theme (live.colors), when it reported
+  if (S.live) for (const k in S.live) th[k] = S.live[k];
+  return th;
+}
+
+// ---------------------------------------------------------------- structure (design/RUBRIC.md)
+// A tile holds one group of things (rule 1). Flat, radius 1, no border.
+function tile(c, th, x, y, w, h) { rr(c, x, y, w, h, 1, th.tile); }
+// A screen shows measurements (rule 2). It is a tile of its own.
+function screen(c, th, x, y, w, h) { rr(c, x, y, w, h, 2, th.display); }
+// A strip at the top (or bottom) edge of a screen for readouts, legend and small buttons,
+// split from the plot by a 1 px line (rule 2.3). Returns the y of the text baseline.
+function strip(c, th, x, y, w, h = 18, bottom = false) {
+  c.fillStyle = th.dline;
+  c.fillRect(x + 3, bottom ? y : y + h - 1, w - 6, 1);
+  return bottom ? y + h - 5 : y + h - 6;
+}
+// A 1 px line between two groups in one tile (rule 4.4).
+function divider(c, th, x, y, h, horizontal = false, w = 0) {
+  c.fillStyle = th.divider;
+  if (horizontal) c.fillRect(x, y, w, 1); else c.fillRect(x, y, 1, h);
 }
 
 // ---------------------------------------------------------------- signal simulation
@@ -246,19 +270,42 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-function waveScroll(c, th, x, y, w, h, hist, key, color) {
+// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
+// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
+// The state lives on `holder` under `key`, so each plot keeps its own zoom.
+function fit(holder, key, peak, target = 0.9) {
+  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
+  const k = "_fit_" + key, g = holder[k] || want;
+  holder[k] = want < g ? want : g + (want - g) * 0.03;
+  return holder[k];
+}
+// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
+function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
+// peak of numeric fields `keys` over the newest n entries of a history
+function histPeak(hist, keys, n) {
+  let p = 0;
+  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
+  return p;
+}
+
+// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
+// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+  const n = Math.min(hist.length, w);
+  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-  const mid = y + h / 2, n = Math.min(hist.length, w);
+  const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
-  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - hist[hist.length - 1 - i][key] * h * 0.46);
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + hist[hist.length - 1 - i][key] * h * 0.46 * (0.7 + 0.3 * Math.abs(noise(i))));
+  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - Math.min(h / 2, hist[hist.length - 1 - i][key] * a));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + Math.min(h / 2, hist[hist.length - 1 - i][key] * a * (0.7 + 0.3 * Math.abs(noise(i)))));
   c.fill(); c.restore();
+  return gain;
 }
 // Decay display. With real measurements (st.envHist: output RMS dB at ~30 Hz, newest last) it
 // draws the last 3 s of output level and estimates the decay time as 3 x the time the level
 // takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
-  rr(c, x, y, w, h, 3, th.display);
+  screen(c, th, x, y, w, h);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
@@ -322,7 +369,7 @@ function legend(c, th, x, y, items, o = {}) {
 
 // Several options of one category in one device, switched by the View selector at the top of
 // the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
-// own state (and history), so switching is instant. Narrower views are centred.
+// own state (and history), so switching is instant. Narrower views start at the left.
 function composeViews(des, ids) {
   const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
   const W = Math.max(...opts.map(o => o.width));
@@ -342,8 +389,11 @@ function composeViews(des, ids) {
     },
     draw(c, th, st, ps, vals) {
       const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
-      const dx = Math.round((W - o.width) / 2);
+      // a narrower view starts at the left; a plain tile fills the rest up to the Input/Output
+      // column, so no bare background shows (RUBRIC 1.1)
+      const dx = 0, gap = W - o.width;
       st.dx = dx;
+      if (gap > 0) tile(c, th, o.width - GAIN_W - 4, HEAD_H + 4, gap - 2, DEVICE_H - 8);
       c.save(); c.translate(dx, 0);
       S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
       try { o.draw(c, th, sub(st)[v], ps, vals); }
@@ -370,8 +420,8 @@ function wrapText(c, x, y, w, text, o = {}) {
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
   if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
-  const y = HEAD_H + 6, h = DEVICE_H - 12;
-  rr(c, x, y, GAIN_W, h, 3, th.panel);
+  const y = HEAD_H + 4, h = DEVICE_H - 8;
+  tile(c, th, x, y, GAIN_W, h);
   let top = y;
   if (S.views) {                                      // view selector at the top of the column
     viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
@@ -776,7 +826,10 @@ function makeCanvas(mg, opts) {
 
   // A, real: input and output scope on top, error (out - in) in 16-bit steps below
   function drawAReal(c, th, st, P) {
-    const wh = Math.round(P.ph * 0.6), mid = P.py + wh / 2, sc = (wh / 2 - 3) / st.wsc, n = st.s.length;
+    const wh = Math.round(P.ph * 0.6), mid = P.py + wh / 2, n = st.s.length;
+    // one zoom for input and output (RUBRIC 2.6): the loudest visible point fills ~90 % of the scope
+    let pkS = 0; for (let i = 0; i < n; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
+    const g = fit(st, "waveA", pkS), sc = (wh / 2 - 3) * g;
     const ey = P.py + wh + 6, eh = P.ph - wh - 6, emid = ey + eh / 2, esc = (eh / 2 - 1) / 3;
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1; c.strokeStyle = th.scale; c.beginPath(); c.moveTo(P.px, mid); c.lineTo(P.px + P.pw, mid); c.stroke();
@@ -798,15 +851,16 @@ function makeCanvas(mg, opts) {
       c.stroke();
     }
     c.restore();
-    legend(c, th, P.x + 6, P.y + P.h - 3, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output. In the error strip it shows out minus in."]], { line: true });
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output. In the error strip it shows out minus in."]], { line: true });
+    zoomNote(c, th, P, g);
     hint(P.px, P.py, P.pw, wh, "Input And Output Waveform", "A short piece of the sound, zoomed in. Cyan is the input, orange is the output. Measured from the audio going in and out.");
     hint(P.px, ey, P.pw, eh, "Error Trace", "Output minus input, in steps of the 16-bit grid. This is the rounding noise and dither the effect adds.");
     hint(P.px + 2, P.py + 1, 120, 10, "Full Height Label", "The level that reaches the top of the scope, in dBFS. It follows the signal.");
-    txt(c, P.px + 2, P.py + 9, `full height = ${dbl(st.wsc).toFixed(0)} dBFS`, { color: th.scale, size: 8.5, align: "left" });
+    txt(c, P.px + 2, P.py + 9, `full height = ${dbl(1 / g).toFixed(0)} dBFS`, { color: th.scale, size: 8.5, align: "left" });
     txt(c, P.px + 2, ey + 8, "Error (out - in), 16-bit steps", { color: th.dispText, size: 8.5, align: "left" });
     sameNote(c, th, st, P.px + P.pw - 4, ey + 8);
-    txt(c, P.x + P.w - 6, P.y + P.h - 3, "grid = 2 steps", { color: th.scale, size: 8.5, align: "right" });
-    hint(P.x + P.w - 70, P.y + P.h - 12, 66, 10, "Grid Size", "Each error grid line is 2 steps of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
+    txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 2 steps", { color: th.scale, size: 8.5, align: "right" });
+    hint(P.x + P.w - 70, P.y + P.h - 13, 66, 10, "Grid Size", "Each error grid line is 2 steps of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
   }
   // B, real: output spectrum (cyan) with the added part (output - input) in orange
   function drawBReal(c, th, st, P) {
@@ -837,7 +891,7 @@ function makeCanvas(mg, opts) {
     sameNote(c, th, st, P.px + 3, P.py + 9, "left");
   }
   function cHints(c, th, P, hw, hh, base) {
-    legend(c, th, P.px, P.py - 4, [[th.cyan, "Error count", "Bars: how often each size of error happens. Error is output minus input."], [th.orange, "Noise trace", "The line at the bottom: the noise level over time."]]);
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "Error count", "Bars: how often each size of error happens. Error is output minus input."], [th.orange, "Noise trace", "The line at the bottom: the noise level over time."]]);
     hint(P.px, P.py, hw, hh + 12, "Error Histogram", "How often each size of error happens, in 16-bit steps. A wide, smooth bump means a smooth dither. Measured as output minus input.");
     hint(P.px + hw + 8, P.py, 24, hh, "Noise Meters", "Left and right level of the added noise, in dBFS. Measured as output minus input.");
     hint(P.px + hw + 34, P.py, 28, hh, "Noise Scale", "Scale for the noise meters, in dBFS.");
@@ -881,18 +935,21 @@ function makeCanvas(mg, opts) {
   }
 
   function dials(c, th, ps, vals, W) {
-    const n = ps.length;
-    if (!n) { rr(c, W - 92, HEAD_H + 4, 88, DEVICE_H - 8, 3, th.panel); txt(c, W - 48, HEAD_H + 88, "No controls", { color: th.dim });
+    const n = ps.length, y = HEAD_H + 4, h = DEVICE_H - 8;
+    if (!n) { tile(c, th, W - 98, y, 96, h); txt(c, W - 50, HEAD_H + 88, "No controls", { color: th.dim });
       return 96; }
     const rows = n <= 5 ? 1 : n <= 10 ? 2 : 3, cols = Math.ceil(n / rows), w = cols * 52;
-    knobGrid(c, th, ps, { x: W - w - 4, y: HEAD_H + 4, w, h: DEVICE_H - 8 }, cols, vals);
-    return w + 8;
+    const tw = w + 8;
+    tile(c, th, W - 2 - tw, y, tw, h);
+    knobGrid(c, th, ps, { x: W - 2 - tw + 4, y, w, h }, cols, vals);
+    return tw;
   }
-  function panel(c, th, w, readouts, dTitle, dText) {
+  function panel(c, th, w, readouts, dTitle, dText, bot = 0) {
     const x = 4, y = HEAD_H + 4, h = DEVICE_H - 8;
-    rr(c, x, y, w, h, 3, th.display);
+    screen(c, th, x, y, w, h);
     menu(c, th, x + 4, y + 3, 104, "BuildATPDF"); arrows(c, th, x + 112, y + 3);
-    c.fillStyle = th.dline; c.fillRect(x, y + 21, w, 1);
+    strip(c, th, x, y, w, 22);
+    if (bot) strip(c, th, x, y + h - bot, w, bot, true);
     let rx = x + w - 6;
     hint(x, y, w, h, dTitle || "Display", dText || "Shows what the effect does to the sound, measured from the input and the output.");
     readouts.slice().reverse().forEach(r => {
@@ -901,8 +958,14 @@ function makeCanvas(mg, opts) {
       txt(c, rx, y + 14, r[0], { color: th.dispText, align: "right" }); rx -= r[0].length * 5 + 10;
       hint(rx + 6, y + 3, r0 - rx, 15, r[3] || r[0], r[4] || "");
     });
-    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32, lx: x + 146, ly: y + 14 };
+    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
+  // zoom readout in the bottom strip (RUBRIC 2.6)
+  const zoomNote = (c, th, P, g) => {
+    if (g <= 1.05) return;
+    txt(c, P.x + 86, P.y + P.h - 4, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
+    hint(P.x + 84, P.y + P.h - 13, 62, 11, "Zoom", "The waveform is enlarged so the loudest part fills the scope. The number says by how much; quiet signals get a larger zoom.");
+  };
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const fm = v => (v >= 0 ? "+" : "") + v.toFixed(1);
 
@@ -912,13 +975,15 @@ function makeCanvas(mg, opts) {
     gs(c, th, W, st);
     const P = panel(c, th, W - dw - 8, st.real ? [["Noise", ndTxt(st), th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${(st.lvl === undefined ? -120 : st.lvl).toFixed(1)} dBFS`, th.cyan, "Signal Level", "The average (RMS) level of the output, in dBFS."]]
       : [["Noise", `${st.nd.toFixed(1)} dBFS`, th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${st.amp.toFixed(1)} LSB`, th.cyan, "Signal Level", "The size of the test tone, in 16-bit steps (LSB)."]],
-      "Zoomed Waveform", "Shows the input and the output zoomed in to single 16-bit steps, so you can see what dither adds.");
+      "Zoomed Waveform", "Shows the input and the output zoomed in to single 16-bit steps, so you can see what dither adds.", 15);
     if (!st.s) return;
     if (st.real) return drawAReal(c, th, st, P);
-    const mid = P.py + P.ph / 2, sc = P.ph / 14;
+    const mid = P.py + P.ph / 2;
+    let pkS = 0; for (let i = 0; i < N; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
+    const g = fit(st, "waveA", pkS / 7), sc = P.ph / 14 * g;     // grid lines stay 1 LSB apart; the zoom moves them
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1;
-    for (let l = -6; l <= 6; l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
+    for (let l = -Math.ceil(7 / g); l <= Math.ceil(7 / g); l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
     c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
     for (let i = 0; i < N; i++) { const x = P.px + i / (N - 1) * P.pw, y = mid - st.s[i] * sc; i ? c.lineTo(x, y) : c.moveTo(x, y); }
     c.stroke();
@@ -927,10 +992,11 @@ function makeCanvas(mg, opts) {
       i ? c.lineTo(x0, y) : c.moveTo(x0, y); c.lineTo(x1, y); }
     c.stroke(); c.restore();
     [-4, 0, 4].forEach(l => txt(c, P.px + 1, mid - l * sc - 2, l ? fm(l) : "0", { color: th.scale, size: 8.5, align: "left" }));
-    legend(c, th, P.x + 6, P.y + P.h - 3, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output."]], { line: true });
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output."]], { line: true });
+    zoomNote(c, th, P, g);
     hint(P.px, P.py, P.pw, P.ph, "Input And Output Waveform", "A short piece of the sound, zoomed in to single 16-bit steps. Cyan is the input, orange is the output. Measured from the audio going in and out.");
-    txt(c, P.x + P.w - 6, P.y + P.h - 3, "grid = 1 LSB", { color: th.scale, size: 8.5, align: "right" });
-    hint(P.x + P.w - 70, P.y + P.h - 12, 66, 10, "Grid Size", "Each grid line is 1 step (LSB) of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
+    txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 1 LSB", { color: th.scale, size: 8.5, align: "right" });
+    hint(P.x + P.w - 70, P.y + P.h - 13, 66, 10, "Grid Size", "Each grid line is 1 step (LSB) of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
   }
 
   // ---------- B: spectrum of the output
@@ -968,8 +1034,8 @@ function makeCanvas(mg, opts) {
     const W = 560, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P0 = panel(c, th, W - dw - 8, [["SNR", st.real ? (st.snrTxt || "-") : `${st.snr.toFixed(0)} dB`, th.cyan, "Signal To Noise Ratio", "How far the signal is above the added noise, in dB. Measured as output level minus noise level."], ["Peak", `${(st.peak || 0).toFixed(1)} LSB`, th.orange, "Error Peak", "The biggest single error between output and input, in 16-bit steps (LSB)."]],
-      "Error Meter", "Shows the error the effect adds (output minus input) as a histogram, noise meters and a trace over time.");
-    const P = Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 });
+      "Error Meter", "Shows the error the effect adds (output minus input) as a histogram, noise meters and a trace over time.", 15);
+    const P = P0;
     if (!st.hist) return;
     if (st.real) return drawCReal(c, th, st, P);
     const hh = P.ph - 44, hw = P.pw - 62, base = P.py + hh;
@@ -999,6 +1065,10 @@ function makeCanvas(mg, opts) {
     txt(c, P.px + 2, sy + 8, "Noise floor over time", { color: th.dispText, size: 8.5, align: "left" });
   }
 
+  // Before the first measurement arrives (real audio still loading) the state is empty: start it with silence.
+  const SILENT = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 0 };
+  const wrap = f => (c, th, st, ps, vals) => { if (!st.dz && !st.lz) live(st, SILENT, 0); return f(c, th, st, ps, vals); };
+
   DESIGNS["Dithers"] = {
     effect: "BuildATPDF",
     refs: [["SaturatorL12.png", "Saturator (waveform + curve display)"], ["EQEightL12.png", "EQ Eight (spectrum)"], ["UtilityL12.png", "Utility (meters)"]],
@@ -1008,17 +1078,17 @@ function makeCanvas(mg, opts) {
         why: "A very quiet sine zoomed to bit level: the input line in cyan, the stepped output in orange, like the waveform view of Saturator.",
         bullets: ["Input and output waveform, grid = 1 LSB step", "Readouts: noise floor (dBFS) and signal level", "Driven by the audio in and the audio out of the device",
           "Live: input and output scope (m.inScope/scope), error strip = out - in in 16-bit steps, Noise = diffRmsDb, Level = outRmsDb (dBFS)"],
-        draw: drawA },
+        draw: wrap(drawA) },
       { id: "B", name: "Noise spectrum", short: "Spectrum", width: 688, step, live,
         why: "FFT spectrum of the output with a dashed line at the measured noise floor, in the style of EQ Eight's analyser.",
         bullets: ["FFT of the output, 0–20 kHz, -140 to -60 dB", "Dashed line = average noise floor", "Shows where the noise sits, so noise shaping is visible",
           "Live: cyan = specOut, orange = specDiff (added part), dashed = diffRmsDb; axis -120..0 dB, log frequency (48 bands, not a 128-bin FFT)"],
-        draw: drawB },
+        draw: wrap(drawB) },
       { id: "C", name: "Error meter", short: "Error", width: 628, step, live,
         why: "Histogram of the error (output minus input) beside two noise meters and a scrolling noise-floor trace.",
         bullets: ["Histogram of the difference between output and input", "Left/right noise meters and SNR readout", "Driven by the in-vs-out difference of each sample",
           "Live: histogram and L/R noise meters from scope out - in (64 samples per frame), SNR = outRmsDb - diffRmsDb, history = diffRmsDb"],
-        draw: drawC },
+        draw: wrap(drawC) },
     ],
   };
 })();
@@ -1105,7 +1175,36 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-function anything() {} // category, pvalue, …: not needed for drawing
+// live.colors "everything": one message per theme colour ("live_surface_bg r g b a")
+const LIVE_COLORS = {};
+function anything() {
+  const n = messagename;
+  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
+  LIVE_COLORS[n] = arrayfromargs(arguments);
+  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
+  liveTheme();
+}
+// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+const LIVE_MAP = {
+  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
+  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+};
+const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
+let themeTask = null;
+function liveTheme() {
+  // the colours arrive as a burst of messages: apply once, after the burst
+  if (themeTask) return;
+  themeTask = new Task(function () {
+    themeTask = null;
+    const L = {};
+    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
+    S.live = L;
+    mgraphics.redraw();
+  });
+  themeTask.schedule(20);
+}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -1185,20 +1284,21 @@ function publishLayout() {
 // ---------------------------------------------------------------- Info View
 // Live shows a hovered object's annotation in its Info View. The display sets its own
 // annotation to the hint under the mouse; dials get their effect's control name and text.
-let hints = [], lastHint = null;
+let hints = [], lastHint = "";
 function onidle(x, y) {
   let best = null;
   const yy = y + HEAD_H;
   for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
-  if (best === lastHint) return;
-  lastHint = best;
+  const key = best ? best.title + "|" + best.text : "";
+  if (key === lastHint) return;               // hints are rebuilt on every paint: compare text
+  lastHint = key;
   log("hover", best ? best.title : "-");
   try {
     BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
     BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
   } catch (e) {}
 }
-function onidleout() { lastHint = null; }
+function onidleout() { lastHint = ""; }
 let annotated = "";
 function annotateDials() {
   const key = (S.effName || "") + params.map(p => p.name).join("|");
@@ -1221,6 +1321,7 @@ function paint() {
   const th = tok();
   try {
     S.hints = [];
+    c.fillStyle = th.gutter; c.fillRect(0, HEAD_H, OPT.width, DEVICE_H);   // gutters (RUBRIC 1.1)
     OPT.draw(c, th, st, params, params.map(() => 0.5));
     hints = S.hints;
   } catch (e) {
@@ -1232,4 +1333,4 @@ function paint() {
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
+function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

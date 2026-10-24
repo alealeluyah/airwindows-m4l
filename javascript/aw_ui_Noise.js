@@ -19,16 +19,40 @@ const HEAD_H = 18;      // device title bar
 function tok() {
   const t = S.themes[S.theme];
   const light = S.theme === "light";
-  return {
-    body: t.DetailViewBackground, text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
+  const th = {
+    // structure (design/RUBRIC.md): tiles on a lighter background, 2 px gutters between them
+    gutter: t.SurfaceHighlight, tile: t.SurfaceBackground, divider: light ? "#8a8a8a" : "#262626",
+    body: t.SurfaceHighlight, panel: t.SurfaceBackground,
+    text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
     display: t.RetroDisplayBackground, dline: t.RetroDisplayBackgroundLine,
     orange: t.RetroDisplayForeground, cyan: t.RetroDisplayForeground2, arc: t.RangeDefault,
     track: light ? "#8f8f8f" : "#1e1e1e", needle: light ? "#121212" : "#d9d9d9",
     ctrlBg: t.ControlBackground, frame: light ? "#4f4f4f" : "#111111", on: t.ViewControlOn,
     meterBg: t.MeterBackground, scale: t.RetroDisplayScaleText.slice(0, 7), title: t.RetroDisplayTitle,
-    dispText: light ? "#cfcfcf" : "#b5b5b5", panel: light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)",
+    dispText: light ? "#cfcfcf" : "#b5b5b5",
     green: "#1ec15a", greenDim: "#0f6b33",
   };
+  // in the device: the user's own Live theme (live.colors), when it reported
+  if (S.live) for (const k in S.live) th[k] = S.live[k];
+  return th;
+}
+
+// ---------------------------------------------------------------- structure (design/RUBRIC.md)
+// A tile holds one group of things (rule 1). Flat, radius 1, no border.
+function tile(c, th, x, y, w, h) { rr(c, x, y, w, h, 1, th.tile); }
+// A screen shows measurements (rule 2). It is a tile of its own.
+function screen(c, th, x, y, w, h) { rr(c, x, y, w, h, 2, th.display); }
+// A strip at the top (or bottom) edge of a screen for readouts, legend and small buttons,
+// split from the plot by a 1 px line (rule 2.3). Returns the y of the text baseline.
+function strip(c, th, x, y, w, h = 18, bottom = false) {
+  c.fillStyle = th.dline;
+  c.fillRect(x + 3, bottom ? y : y + h - 1, w - 6, 1);
+  return bottom ? y + h - 5 : y + h - 6;
+}
+// A 1 px line between two groups in one tile (rule 4.4).
+function divider(c, th, x, y, h, horizontal = false, w = 0) {
+  c.fillStyle = th.divider;
+  if (horizontal) c.fillRect(x, y, w, 1); else c.fillRect(x, y, 1, h);
 }
 
 // ---------------------------------------------------------------- signal simulation
@@ -246,19 +270,42 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-function waveScroll(c, th, x, y, w, h, hist, key, color) {
+// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
+// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
+// The state lives on `holder` under `key`, so each plot keeps its own zoom.
+function fit(holder, key, peak, target = 0.9) {
+  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
+  const k = "_fit_" + key, g = holder[k] || want;
+  holder[k] = want < g ? want : g + (want - g) * 0.03;
+  return holder[k];
+}
+// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
+function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
+// peak of numeric fields `keys` over the newest n entries of a history
+function histPeak(hist, keys, n) {
+  let p = 0;
+  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
+  return p;
+}
+
+// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
+// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+  const n = Math.min(hist.length, w);
+  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-  const mid = y + h / 2, n = Math.min(hist.length, w);
+  const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
-  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - hist[hist.length - 1 - i][key] * h * 0.46);
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + hist[hist.length - 1 - i][key] * h * 0.46 * (0.7 + 0.3 * Math.abs(noise(i))));
+  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - Math.min(h / 2, hist[hist.length - 1 - i][key] * a));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + Math.min(h / 2, hist[hist.length - 1 - i][key] * a * (0.7 + 0.3 * Math.abs(noise(i)))));
   c.fill(); c.restore();
+  return gain;
 }
 // Decay display. With real measurements (st.envHist: output RMS dB at ~30 Hz, newest last) it
 // draws the last 3 s of output level and estimates the decay time as 3 x the time the level
 // takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
-  rr(c, x, y, w, h, 3, th.display);
+  screen(c, th, x, y, w, h);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
@@ -322,7 +369,7 @@ function legend(c, th, x, y, items, o = {}) {
 
 // Several options of one category in one device, switched by the View selector at the top of
 // the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
-// own state (and history), so switching is instant. Narrower views are centred.
+// own state (and history), so switching is instant. Narrower views start at the left.
 function composeViews(des, ids) {
   const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
   const W = Math.max(...opts.map(o => o.width));
@@ -342,8 +389,11 @@ function composeViews(des, ids) {
     },
     draw(c, th, st, ps, vals) {
       const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
-      const dx = Math.round((W - o.width) / 2);
+      // a narrower view starts at the left; a plain tile fills the rest up to the Input/Output
+      // column, so no bare background shows (RUBRIC 1.1)
+      const dx = 0, gap = W - o.width;
       st.dx = dx;
+      if (gap > 0) tile(c, th, o.width - GAIN_W - 4, HEAD_H + 4, gap - 2, DEVICE_H - 8);
       c.save(); c.translate(dx, 0);
       S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
       try { o.draw(c, th, sub(st)[v], ps, vals); }
@@ -370,8 +420,8 @@ function wrapText(c, x, y, w, text, o = {}) {
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
   if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
-  const y = HEAD_H + 6, h = DEVICE_H - 12;
-  rr(c, x, y, GAIN_W, h, 3, th.panel);
+  const y = HEAD_H + 4, h = DEVICE_H - 8;
+  tile(c, th, x, y, GAIN_W, h);
   let top = y;
   if (S.views) {                                      // view selector at the top of the column
     viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
@@ -696,7 +746,6 @@ function makeCanvas(mg, opts) {
   const l2 = Math.log2;
   const TOP = HEAD_H, BOT = HEAD_H + DEVICE_H;
   const greyFill = () => (S.theme === "light" ? "#5e5e5e" : "#575757");
-  const panel = (c, th, x, y, w, h) => rr(c, x, y, w, h, 3, th.display);
   // effect menu + step arrows; the name is shortened to fit the box (menu() in lib.js does not)
   const chrome = (c, th, x, y, mw, label) => {
     let s = S.effName || label; c.font = `400 9.5px ${FONT}`;
@@ -706,6 +755,33 @@ function makeCanvas(mg, opts) {
     arrows(c, th, x + mw + 4, y);
   };
   const gs = gainStrip;
+  // ---- structure (RUBRIC 1, 8): tiles for selector and dials, a screen between them ----
+  const Y0 = HEAD_H + 4, HH = DEVICE_H - 8;
+  const noCtl = (c, th, x, y, w, h) => {
+    txt(c, x + w / 2, y + h / 2 - 2, "No controls", { color: th.text, size: 10 });
+    txt(c, x + w / 2, y + h / 2 + 11, "this effect has no dials", { color: th.dim, size: 8.5 });
+  };
+  // Left tile (menu + half the dials; Lw 0 = none), right tile (other half), gain strip at W - GAIN_W - 4.
+  // menuInTile false: the caller puts the menu in the screen strip. Returns the screen rect.
+  function frame(c, th, ps, vals, W, Lw, Rw, menuInTile) {
+    const gx = W - GAIN_W - 4, half = Math.ceil(ps.length / 2);
+    const L = Lw ? ps.slice(0, half) : [], R = Lw ? ps.slice(half) : ps;
+    const hasR = R.length > 0 || !Lw, rtx = hasR ? gx - 2 - Rw : gx;
+    const sx = Lw ? 4 + Lw + 2 : 4;
+    if (Lw) {
+      tile(c, th, 4, Y0, Lw, HH);
+      const top = menuInTile ? 20 : 0;
+      if (menuInTile) chrome(c, th, 8, Y0 + 4, Lw - 42, NAME);
+      if (L.length) knobGrid(c, th, L, { x: 4, y: Y0 + top, w: Lw, h: HH - top + (menuInTile ? 4 : 0) }, 2, vals);
+      else if (!ps.length) noCtl(c, th, 4, Y0, Lw, HH);
+    }
+    if (hasR) {
+      tile(c, th, rtx, Y0, Rw, HH);
+      if (R.length) knobGrid(c, th, R, { x: rtx, y: Y0, w: Rw, h: HH }, 2, vals);
+      else noCtl(c, th, rtx, Y0, Rw, HH);
+    }
+    return { x: sx, y: Y0, w: rtx - 2 - sx, h: HH };
+  }
   // controls split into a left and a right area; 0 controls shows a note
   function place(c, th, ps, vals, L, R) {
     if (!ps.length) {
@@ -798,6 +874,16 @@ function makeCanvas(mg, opts) {
   const floorOf = vals => -78 + 48 * mean(vals);           // dBFS peak level of the added noise
   const shape = (f, m) => (m - 0.5) * 6 * l2(f / 1000);   // dB tilt across frequency
   const NAME = "DeNoise";
+  // RUBRIC 2.6 for tiny signals: fit() zooms 1x..32x, so a decade scale S = 10^n first brings the
+  // peak into that range. Returns the total gain (fit * S). Hysteresis keeps S from flickering.
+  function fit10(h, key, pk) {
+    const fk = "_fit_" + key, sk = "_s_" + key;
+    let S = h[sk] || 1;
+    while (pk * S > 1.2 && S > 1) { S /= 10; if (h[fk]) h[fk] = Math.min(32, h[fk] * 10); }
+    while (pk * S < 0.03 && S < 1e8) { S *= 10; if (h[fk]) h[fk] = Math.max(1, h[fk] / 10); }
+    h[sk] = S;
+    return fit(h, key, pk * S) * S;
+  }
   function stepN(st, dt) {
     const d = base(st, dt); specStep(st, dt, d);
     if (st.rms === undefined) { st.rms = 0; st.cols = []; st.colT = 0; for (let q = 80; q > 0; q--) st.cols.push({ e: drums(Math.max(0, st.t - q / 25)).env, j: Array.from({ length: 24 }, (_, r) => noise((Math.floor(st.t * 25) - q) * 3.7 + r * 11.3)) }); }
@@ -833,8 +919,8 @@ function makeCanvas(mg, opts) {
             D.push(d); pk = Math.max(pk, Math.abs(d));
           }
           st.ds = D;
-          const rms = Math.pow(10, st.nz / 20), tgt = Math.max(pk * 1.15, rms * 1.5, 1e-6);
-          st.dz = typeof st.dz === "number" && st.dz > tgt ? st.dz + (tgt - st.dz) * 0.1 : tgt;
+          const rms = Math.pow(10, st.nz / 20);
+          st.dpk0 = pk;
           st.dPk = lvSm(st.dPk, 20 * Math.log10(Math.max(pk, 1e-6)), 0.5, 0.2);
           // histogram of the difference samples, +/-3 rms in 13 bins, smoothed over frames
           const h = st.dh || (st.dh = new Array(13).fill(0)), cnt = new Array(13).fill(0), w = 3 * Math.max(rms, 1e-7);
@@ -848,17 +934,19 @@ function makeCanvas(mg, opts) {
           "Driven by the audio: RMS level of (output minus input), auto-zoomed to that level"],
         draw(c, th, st, ps, vals) {
           gs(c, th, 588 - GAIN_W - 4, st);
-          const fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl; const zr = lv ? st.dz || 1e-4 : 5 * nA, k = Math.floor(st.t * 20);
-          chrome(c, th, 6, TOP + 4, 72, NAME);
-          place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 412, y: TOP + 4, w: 106, h: 163 });
-          const px = 116, py = TOP + 6, pw = 292, ph = 157;
-          panel(c, th, px, py, pw, ph);
-          const sx = px + 8, sw = 190, sy = py + 20, sh = 80, mid = sy + sh / 2, NS = lv ? 64 : 40, stp = sw / NS;
-          txt(c, sx, py + 11, "Zoom", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, sx + 28, py + 11, `x ${Math.round(1 / Math.max(zr, 1e-6))}`, { color: th.cyan, size: 9, align: "left" });
-          rr(c, sx, sy, sw, sh, 0, th.meterBg);
-          const Y = v => mid - clamp(v / zr, -1, 1) * sh * 0.5 * 0.9;
+          const fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl; const k = Math.floor(st.t * 20);
+          const { x: px, y: py, w: pw, h: ph } = frame(c, th, ps, vals, 588, 112, 106, true);
+          screen(c, th, px, py, pw, ph);
+          const sb = strip(c, th, px, py, pw, 19);
+          strip(c, th, px, py + 107, pw, ph - 107, true);
+          const sx = px + 8, sw = 190, sy = py + 23, sh = 76, mid = sy + sh / 2, NS = lv ? 64 : 40, stp = sw / NS;
           const rmsN = lv ? Math.pow(10, lvF(st.nz, -120) / 20) : nA * 0.41;
+          // auto zoom of the difference samples (RUBRIC 2.6); the plot is centred on 0
+          const G = fit10(st, "dz", lv ? Math.max(st.dpk0 || 0, rmsN * 1.5, 1e-7) : 5 * nA);
+          txt(c, px + 8, sb, zoomText(G), { color: th.dispText, size: 8.5, align: "left" });
+          hint(px + 6, py + 4, 60, 12, "Zoom", "The noise is enlarged so its loudest recent sample fills the scope. The number says by how much; a quieter noise gets a larger zoom.");
+          rr(c, sx, sy, sw, sh, 0, th.meterBg);
+          const Y = v => mid - clamp(v * G, -1, 1) * sh / 2;
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
           c.strokeStyle = th.dline; c.lineWidth = 1; c.beginPath(); c.moveTo(sx, mid); c.lineTo(sx + sw, mid); c.stroke();
           c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath();
@@ -879,29 +967,28 @@ function makeCanvas(mg, opts) {
           }
           c.stroke(); c.restore();
           }
-          legend(c, th, sx + 70, py + 11, (lv ? [] : [[th.dispText, "In", "Grey line: the clean input signal, drawn as a reference."]]).concat([
+          legend(c, th, px + 70, sb, (lv ? [] : [[th.dispText, "In", "Grey line: the clean input signal, drawn as a reference."]]).concat([
             [th.cyan, "Out - in", "Cyan steps: output minus input, sample by sample. This is the noise."],
             [th.orange, "RMS", "Orange lines: the average size (RMS) of the noise, drawn above and below zero."]]));
           hint(sx, sy, sw, sh, "Difference Scope", "A very zoomed view of output minus input, one step per sample. If the effect adds no noise, the line is flat in the middle. Zoom adjusts to the noise level.");
           hint(sx, Y(rmsN) - 4, sw, 8, "RMS Line (Upper)", "The average size (RMS) of the noise. Measured from output minus input.");
           hint(sx, Y(-rmsN) - 4, sw, 8, "RMS Line (Lower)", "The same RMS level on the negative side of zero.");
-          hint(sx, py + 2, 64, 12, "Zoom Factor", "How many times the scope is magnified. Higher means the noise is smaller.");
           // histogram of difference samples
           const hx = sx + sw + 10, hw = pw - (hx - px) - 8, nb = 13, bw = hw / nb;
-          txt(c, hx + hw / 2, py + 11, "Samples", { color: th.scale, size: 8.5 });
+          txt(c, hx + hw / 2, sb, "Samples", { color: th.scale, size: 8.5 });
           for (let i = 0; i < nb; i++) {
             const u = (i - (nb - 1) / 2) / ((nb - 1) / 2), p = lv ? clamp((st.dh || [])[i] || 0, 0.02, 1) : clamp(Math.max(0, 1 - Math.abs(u)) + 0.07 * noise(i * 5 + k), 0.02, 1);
             c.fillStyle = th.cyan; c.fillRect(hx + i * bw + 0.5, sy + sh - p * sh, bw - 1, p * sh);
           }
           const floor = db(rmsN);
           hint(hx, sy, hw, sh, "Sample Histogram", "How often each size of noise sample occurs. A tall middle with thin sides is normal noise. Measured from output minus input.");
-          hint(sx, py + 104, 180, 40, "Noise Floor", "Average level of the noise in dBFS (0 dBFS is full scale). Lower is quieter. Measured as the RMS of output minus input.");
-          hint(px + pw - 62, py + 128, 58, 14, "Effective Bits", "How many bits of resolution remain above the noise. More bits means a cleaner sound.");
-          hint(px + pw - 62, py + 104, 58, 12, "Noise Peak", "Largest noise sample seen recently, in dB.");
-          txt(c, sx, py + 114, "Noise floor (RMS of out - in)", { color: th.scale, size: 8.5, align: "left" });
-          txt(c, sx, py + 138, `${floor.toFixed(1)} dBFS`, { color: th.cyan, size: 17, bold: true, align: "left" });
-          txt(c, px + pw - 8, py + 138, `~ ${Math.max(0, (-floor - 1.76) / 6.02).toFixed(1)} bit`, { color: th.orange, size: 10, align: "right" });
-          txt(c, px + pw - 8, py + 114, `Peak ${(lv ? lvF(st.dPk, -120) : fl).toFixed(1)}`, { color: th.dispText, size: 8.5, align: "right" });
+          hint(px + 8, py + 112, 180, 42, "Noise Floor", "Average level of the noise in dBFS (0 dBFS is full scale). Lower is quieter. Measured as the RMS of output minus input.");
+          hint(px + pw - 70, py + 134, 62, 16, "Effective Bits", "How many bits of resolution remain above the noise. More bits means a cleaner sound.");
+          hint(px + pw - 70, py + 112, 62, 12, "Noise Peak", "Largest noise sample seen recently, in dB.");
+          txt(c, px + 8, py + 123, "Noise floor (RMS of out - in)", { color: th.scale, size: 8.5, align: "left" });
+          txt(c, px + 8, py + 148, `${floor.toFixed(1)} dBFS`, { color: th.cyan, size: 17, bold: true, align: "left" });
+          txt(c, px + pw - 8, py + 148, `~ ${Math.max(0, (-floor - 1.76) / 6.02).toFixed(1)} bit`, { color: th.orange, size: 10, align: "right" });
+          txt(c, px + pw - 8, py + 123, `Peak ${(lv ? lvF(st.dPk, -120) : fl).toFixed(1)}`, { color: th.dispText, size: 8.5, align: "right" });
         } },
       { id: "B", name: "Floor spectrum", short: "Spectrum", width: 548, step: stepN,
         live(st, m, dt) {
@@ -918,27 +1005,33 @@ function makeCanvas(mg, opts) {
         draw(c, th, st, ps, vals) {
           gs(c, th, 548 - GAIN_W - 4, st);
           const m = mean(vals), fl = floorOf(vals), nA = lin(fl), lv = !!st.lv; st.fl = fl;
-          const px = 4, py = TOP + 4, pw = 472, ph = 104;
-          panel(c, th, px, py, pw, ph);
-          chrome(c, th, px + 4, py + 3, 84, NAME);
-          noRow(c, th, ps, vals, { x: 4, y: TOP + 112, w: 472, h: 52 });
+          const px = 4, py = Y0, pw = 548 - GAIN_W - 4 - 2 - 4, ph = 105;
+          screen(c, th, px, py, pw, ph);
+          strip(c, th, px, py, pw, 22);
+          const bb = strip(c, th, px, py + ph - 14, pw, 14, true);
+          chrome(c, th, px + 6, py + 4, 84, NAME);
+          // dial row in its own tile under the screen
+          const dy = py + ph + 2, dh = HH - ph - 2;
+          tile(c, th, px, dy, pw, dh);
+          if (!ps.length) noCtl(c, th, px, dy, pw, dh);
+          else knobGrid(c, th, ps, { x: px, y: dy + 2, w: pw, h: 50 }, ps.length, vals, Math.min(52, (pw - 8) / ps.length));
           const sp = lv ? st.lvI || new Array(NB).fill(-120) : st.spI || new Array(NB).fill(-90);
           const sig = lv ? lvF(st.sig, -120) : db(st.rms || 0.01), nz = lv ? lvF(st.nz, -120) : db(nA * 0.41);
           [["Signal", sig.toFixed(1), th.cyan, 150], ["Noise", nz.toFixed(1), th.orange, 255], ["SNR", (sig - nz).toFixed(1) + " dB", th.green, 360]].forEach(([l, v, col, o]) => {
-            txt(c, px + o, py + 13, l, { color: th.dispText, size: 9, align: "left" });
-            txt(c, px + o + (l === "SNR" ? 22 : 33), py + 13, v, { color: col, size: 9, align: "left" });
+            txt(c, px + o, py + 14, l, { color: th.dispText, size: 9, align: "left" });
+            txt(c, px + o + (l === "SNR" ? 22 : 33), py + 14, v, { color: col, size: 9, align: "left" });
           });
-          const gx = px + 24, gy = py + 21, gw = pw - 48, gh = 62;
-          legend(c, th, gx, py + 92, [
+          const gx = px + 24, gy = py + 26, gw = pw - 48, gh = 52;
+          legend(c, th, px + 8, bb, [
             [greyFill(), "Input", "Grey area: spectrum of the signal going in."],
             [th.orange, "Noise", "Orange area: spectrum of output minus input. This is the noise the effect adds."],
             [th.cyan, "Output", "Cyan line: spectrum of the signal coming out."]]);
-          hint(px + 148, py + 3, 100, 13, "Signal Level", "Average level of the input signal in dB. Measured as RMS.");
-          hint(px + 253, py + 3, 100, 13, "Noise Level", "Average level of the added noise in dB. Measured as RMS of output minus input.");
-          hint(px + 358, py + 3, 80, 13, "Signal-to-Noise Ratio", "Signal level minus noise level, in dB. Higher is cleaner.");
+          hint(px + 148, py + 4, 100, 14, "Signal Level", "Average level of the input signal in dB. Measured as RMS.");
+          hint(px + 253, py + 4, 100, 14, "Noise Level", "Average level of the added noise in dB. Measured as RMS of output minus input.");
+          hint(px + 358, py + 4, 80, 14, "Signal-to-Noise Ratio", "Signal level minus noise level, in dB. Higher is cleaner.");
           hint(gx, gy, gw, gh, "Spectrum Display", "Frequency from 20 Hz to 20 kHz, left to right. Grey area: input. Orange area: added noise. Cyan line: output. Measured with an FFT.");
           hint(gx - 24, gy, 24, gh, "Level Scale", "Level in dB. Higher is louder.");
-          hint(gx, py + ph - 12, gw, 10, "Frequency Scale", "Frequency in Hz. Bass is at the left, treble at the right.");
+          hint(gx, py + 80, gw, 10, "Frequency Scale", "Frequency in Hz. Bass is at the left, treble at the right.");
           const Y = v => gy + gh * (1 - clamp((v + 100) / 94, 0, 1));
           const noiseDb = [], outDb = [];
           for (let i = 0; i < NB; i++) {
@@ -961,7 +1054,7 @@ function makeCanvas(mg, opts) {
           for (let i = 0; i < NB; i++) { const x = gx + gw * i / (NB - 1); i ? c.lineTo(x, Y(outDb[i])) : c.moveTo(x, Y(outDb[i])); }
           c.stroke(); c.restore();
           [-20, -40, -60, -80].forEach(v => txt(c, gx - 3, Y(v) + 3, String(v), { color: th.scale, size: 8.5, align: "right" }));
-          hzLabels(c, th, gx, py + ph - 3, gw);
+          hzLabels(c, th, gx, py + 88, gw);
         } },
       { id: "C", name: "Spectrogram", short: "Sonogram", width: 588, step: stepN,
         live(st, m, dt) {
@@ -979,12 +1072,12 @@ function makeCanvas(mg, opts) {
         draw(c, th, st, ps, vals) {
           gs(c, th, 588 - GAIN_W - 4, st);
           const m = mean(vals), fl = floorOf(vals), lv = !!st.lv; st.fl = fl;
-          chrome(c, th, 6, TOP + 4, 72, NAME);
-          place(c, th, ps, vals, { x: 4, y: TOP + 19, w: 108, h: 147 }, { x: 412, y: TOP + 4, w: 106, h: 163 });
-          const px = 116, py = TOP + 6, pw = 292, ph = 157;
-          panel(c, th, px, py, pw, ph);
-          const sx = px + 26, sy = py + 18, sw = 198, rows = 24, rh = 4, sh = rows * rh, cw = 3;
-          txt(c, sx, py + 11, "Added / removed signal", { color: th.scale, size: 8.5, align: "left" });
+          const { x: px, y: py, w: pw, h: ph } = frame(c, th, ps, vals, 588, 112, 106, true);
+          screen(c, th, px, py, pw, ph);
+          const sb = strip(c, th, px, py, pw, 19);
+          const bb = strip(c, th, px, py + ph - 18, pw, 18, true);
+          const sx = px + 28, sy = py + 22, sw = 204, rows = 24, rh = 4, sh = rows * rh, cw = 3;
+          txt(c, sx, sb, "Added / removed signal", { color: th.scale, size: 8.5, align: "left" });
           c.fillStyle = th.meterBg; c.fillRect(sx, sy, sw, sh);
           c.save(); c.beginPath(); c.rect(sx, sy, sw, sh); c.clip();
           const cols = (lv ? st.lcols : st.cols) || [], nc = Math.min(cols.length, Math.floor(sw / cw));
@@ -1002,26 +1095,25 @@ function makeCanvas(mg, opts) {
           c.globalAlpha = 1; c.restore();
           [[20000, "20k"], [1000, "1k"], [100, "100"]].forEach(([f, s]) =>
             txt(c, sx - 3, sy + sh - sh * Math.log10(f / 20) / 3 + (f > 10000 ? 8 : 3), s, { color: th.scale, size: 8.5, align: "right" }));
-          txt(c, sx + sw, py + 126, "now", { color: th.scale, size: 8.5, align: "right" });
-          txt(c, sx, py + 126, "2 s ago", { color: th.scale, size: 8.5, align: "left" });
-          c.globalAlpha = 1;
-          legend(c, th, sx, py + 148, [
+          txt(c, sx + sw, py + 130, "now", { color: th.scale, size: 8.5, align: "right" });
+          txt(c, sx, py + 130, "2 s ago", { color: th.scale, size: 8.5, align: "left" });
+          legend(c, th, px + 8, bb, [
             [th.orange, "Noise level", lv ? "Orange colour: noise in each band. Dim is -80 dB or lower, bright is -40 dB or higher. The Floor meter uses the same colour." : "Orange colour: noise in each band. Dim is at the floor, bright is 10 dB above it. The Floor meter uses the same colour."],
             [th.cyan, "Floor reading", "Cyan number: the average level of the noise now, in dBFS."]]);
           hint(sx, sy, sw, sh, "Noise Spectrogram", "Frequency goes up, time goes left. Brighter orange means more noise at that frequency. Measured with an FFT of output minus input.");
-          hint(sx - 26, sy, 24, sh, "Frequency Scale", "Frequency in Hz. 20 Hz at the bottom, 20 kHz at the top.");
-          hint(sx, py + 117, sw, 11, "Time Scale", "Time runs from the left (older) to the right (now).");
+          hint(sx - 28, sy, 26, sh, "Frequency Scale", "Frequency in Hz. 20 Hz at the bottom, 20 kHz at the top.");
+          hint(sx, py + 121, sw, 11, "Time Scale", "Time runs from the left (older) to the right (now).");
           // noise floor meter
-          const mx = px + 246, mw = 12;
-          txt(c, mx + mw / 2 + 2, py + 11, "Floor", { color: th.dispText, size: 8.5 });
+          const mx = px + 262, mw = 12;
+          txt(c, mx + mw / 2 + 2, sb, "Floor", { color: th.dispText, size: 8.5 });
           hint(mx - 2, sy, mw + 6, sh, "Noise Floor Meter", "Bar height shows the average noise level now. Taller means more noise. Measured as RMS of output minus input.");
           hint(mx - 24, sy, 22, sh, "Floor Scale", "Noise level in dB.");
-          hint(mx - 8, py + 117, 32, 24, "Noise Floor Reading", "The noise level now as a number, in dBFS (0 is full scale). Lower is quieter.");
+          hint(mx - 8, py + 121, 32, 22, "Noise Floor Reading", "The noise level now as a number, in dBFS (0 is full scale). Lower is quieter.");
           const rmsDb = lv ? lvF(st.nz, -120) : fl - 7.7, lo = lv ? 100 : 110, span = lv ? 80 : 60;
           meterV(c, th, mx, sy, mw, sh, clamp((rmsDb + lo) / span, 0, 1), false, th.orange);
           (lv ? [-30, -50, -70, -90] : [-60, -80, -100]).forEach(v => { const yy = sy + sh * (1 - (v + lo) / span); c.fillStyle = th.scale; c.fillRect(mx + mw, yy, 3, 1); txt(c, mx - 2, yy + 3, String(v), { color: th.scale, size: 8, align: "right" }); });
-          txt(c, mx + mw / 2 + 2, py + 126, Math.max(-120, rmsDb).toFixed(1), { color: th.cyan, size: 11, bold: true });
-          txt(c, mx + mw / 2 + 2, py + 138, "dBFS", { color: th.scale, size: 8.5 });
+          txt(c, mx + mw / 2 + 2, py + 130, Math.max(-120, rmsDb).toFixed(1), { color: th.cyan, size: 11, bold: true });
+          txt(c, mx + mw / 2 + 2, py + 139, "dBFS", { color: th.scale, size: 8.5 });
         } },
     ],
   };
@@ -1109,7 +1201,36 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-function anything() {} // category, pvalue, …: not needed for drawing
+// live.colors "everything": one message per theme colour ("live_surface_bg r g b a")
+const LIVE_COLORS = {};
+function anything() {
+  const n = messagename;
+  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
+  LIVE_COLORS[n] = arrayfromargs(arguments);
+  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
+  liveTheme();
+}
+// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+const LIVE_MAP = {
+  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
+  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+};
+const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
+let themeTask = null;
+function liveTheme() {
+  // the colours arrive as a burst of messages: apply once, after the burst
+  if (themeTask) return;
+  themeTask = new Task(function () {
+    themeTask = null;
+    const L = {};
+    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
+    S.live = L;
+    mgraphics.redraw();
+  });
+  themeTask.schedule(20);
+}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -1189,20 +1310,21 @@ function publishLayout() {
 // ---------------------------------------------------------------- Info View
 // Live shows a hovered object's annotation in its Info View. The display sets its own
 // annotation to the hint under the mouse; dials get their effect's control name and text.
-let hints = [], lastHint = null;
+let hints = [], lastHint = "";
 function onidle(x, y) {
   let best = null;
   const yy = y + HEAD_H;
   for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
-  if (best === lastHint) return;
-  lastHint = best;
+  const key = best ? best.title + "|" + best.text : "";
+  if (key === lastHint) return;               // hints are rebuilt on every paint: compare text
+  lastHint = key;
   log("hover", best ? best.title : "-");
   try {
     BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
     BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
   } catch (e) {}
 }
-function onidleout() { lastHint = null; }
+function onidleout() { lastHint = ""; }
 let annotated = "";
 function annotateDials() {
   const key = (S.effName || "") + params.map(p => p.name).join("|");
@@ -1225,6 +1347,7 @@ function paint() {
   const th = tok();
   try {
     S.hints = [];
+    c.fillStyle = th.gutter; c.fillRect(0, HEAD_H, OPT.width, DEVICE_H);   // gutters (RUBRIC 1.1)
     OPT.draw(c, th, st, params, params.map(() => 0.5));
     hints = S.hints;
   } catch (e) {
@@ -1236,4 +1359,4 @@ function paint() {
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
+function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

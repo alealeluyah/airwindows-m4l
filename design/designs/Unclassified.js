@@ -70,18 +70,21 @@
   }
 
   function dials(c, th, ps, vals, W) {
-    const n = ps.length;
-    if (!n) { rr(c, W - 92, HEAD_H + 4, 88, DEVICE_H - 8, 3, th.panel); txt(c, W - 48, HEAD_H + 88, "No controls", { color: th.dim });
+    const n = ps.length, y = HEAD_H + 4, h = DEVICE_H - 8;
+    if (!n) { tile(c, th, W - 98, y, 96, h); txt(c, W - 50, HEAD_H + 88, "No controls", { color: th.dim });
       return 96; }
     const rows = n <= 5 ? 1 : 2, cols = Math.ceil(n / rows), cw = n > 10 ? 51 : 52, w = cols * cw;
-    knobGrid(c, th, ps, { x: W - w - 4, y: HEAD_H + 4, w, h: DEVICE_H - 8 }, cols, vals, cw);
-    return w + 8;
+    const tw = w + 8;
+    tile(c, th, W - 2 - tw, y, tw, h);
+    knobGrid(c, th, ps, { x: W - 2 - tw + 4, y, w, h }, cols, vals, cw);
+    return tw;
   }
-  function panel(c, th, w, readouts, dTitle, dText) {
+  function panel(c, th, w, readouts, dTitle, dText, bot = 0) {
     const x = 4, y = HEAD_H + 4, h = DEVICE_H - 8;
-    rr(c, x, y, w, h, 3, th.display);
+    screen(c, th, x, y, w, h);
     menu(c, th, x + 4, y + 3, 104, "CStrip"); arrows(c, th, x + 112, y + 3);
-    c.fillStyle = th.dline; c.fillRect(x, y + 21, w, 1);
+    strip(c, th, x, y, w, 22);
+    if (bot) strip(c, th, x, y + h - bot, w, bot, true);
     let rx = x + w - 6;
     hint(x, y, w, h, dTitle || "Display", dText || "Shows what the effect does to the sound, measured by comparing the input and the output.");
     readouts.slice().reverse().forEach(r => {
@@ -90,7 +93,7 @@
       txt(c, rx, y + 14, r[0], { color: th.dispText, align: "right" }); rx -= r[0].length * 5.6 + 12;
       hint(rx + 8, y + 3, r0 - rx, 15, r[3] || r[0], r[4] || "");
     });
-    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32, lx: x + 146, ly: y + 14 };
+    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const sgn = (v, p = 1) => (v >= 0 ? "+" : "") + v.toFixed(p);
@@ -101,7 +104,7 @@
       c.fillStyle = th.dline; c.fillRect(x, py, 1, ph - 10); txt(c, x, py + ph - 1, s, { color: th.scale, size: 8.5 }); });
   };
   // legend row at the top of the display; returns the display area below it
-  const lgRow = (c, th, P0, items, o) => { legend(c, th, P0.px + 1, P0.py + 8, items, o); return Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 }); };
+  const lgRow = (c, th, P0, items, o) => { legend(c, th, P0.x + 6, P0.y + P0.h - 4, items, o); return P0; };
   const fx = (px, pw, b, n) => px + pw * b / ((n || NB) - 1);
 
   // ---------- A: spectrum in vs out
@@ -136,13 +139,12 @@
     const W = 632, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P0 = panel(c, th, W - dw - 8, [["In", `${Math.max(-60, st.inDb || -60).toFixed(0)} dB`, th.cyan, "Input Level", "The peak level going in, in dB. Measured at the input of the device."], ["Out", `${Math.max(-60, st.outDb || -60).toFixed(0)} dB`, th.orange, "Output Level", "The peak level coming out, in dB. Measured at the output of the device."]],
-      "Transfer Curve", "Plots output level against input level. A straight diagonal line means the effect changes nothing; a bent line means it compresses or saturates.");
+      "Transfer Curve", "Plots output level against input level. A straight diagonal line means the effect changes nothing; a bent line means it compresses or saturates.", 15);
     const P = lgRow(c, th, P0, [[th.cyan, "Samples", "Each cyan dot is one measurement of input against output."], [th.orange, "Curve", "The average output for each input level: the transfer curve the effect has right now."], [th.scale, "No change", "The straight diagonal line: output equals input."]]);
     if (st.real) return drawBReal(c, th, st, P);
     if (!st.pts) return;
     const sz = P.ph - 12, gx = P.px + 20, gy = P.py;
     const X = d => gx + sz * (Math.min(0, Math.max(-56, d)) + 56) / 56, Y = d => gy + sz * (1 - (Math.min(0, Math.max(-56, d)) + 56) / 56);
-    c.fillStyle = th.panel; c.fillRect(gx, gy, sz, sz);
     clipTo(c, gx, gy, sz, sz);
     c.strokeStyle = th.dline; c.lineWidth = 1;
     [-48, -36, -24, -12].forEach(d => { c.beginPath(); c.moveTo(X(d), gy); c.lineTo(X(d), gy + sz); c.moveTo(gx, Y(d)); c.lineTo(gx + sz, Y(d)); c.stroke(); });
@@ -173,7 +175,6 @@
   function drawBReal(c, th, st, P) {
     const sz = P.ph - 12, gx = P.px + 20, gy = P.py;
     const X = v => gx + sz * (Math.max(-1, Math.min(1, v)) + 1) / 2, Y = v => gy + sz * (1 - (Math.max(-1, Math.min(1, v)) + 1) / 2);
-    c.fillStyle = th.panel; c.fillRect(gx, gy, sz, sz);
     clipTo(c, gx, gy, sz, sz);
     c.strokeStyle = th.dline; c.lineWidth = 1;
     [-0.5, 0, 0.5].forEach(v => { c.beginPath(); c.moveTo(X(v), gy); c.lineTo(X(v), gy + sz); c.moveTo(gx, Y(v)); c.lineTo(gx + sz, Y(v)); c.stroke(); });
@@ -186,7 +187,7 @@
     c.strokeStyle = th.scale; c.strokeRect(gx + 0.5, gy + 0.5, sz - 1, sz - 1);
     [-1, 0, 1].forEach(v => { txt(c, X(v) + (v === 1 ? -1 : v === -1 ? 1 : 0), gy + sz + 9, String(v), { color: th.scale, size: 8, align: v === 1 ? "right" : v === -1 ? "left" : "center" });
       txt(c, gx - 3, Y(v) + (v === 1 ? 7 : 3), String(v), { color: th.scale, size: 8, align: "right" }); });
-    txt(c, gx + sz * 0.8, gy + sz + 9, "In (amplitude)", { color: th.dispText, size: 8 });
+    txt(c, gx + sz * 0.75, gy + sz + 9, "In", { color: th.dispText, size: 8 });
     txt(c, gx - 3, Y(0.5) + 3, "Out", { color: th.dispText, size: 8, align: "right" });
     const x0 = gx + sz + 16, bw = P.x + P.w - x0 - 6;
     txt(c, x0, P.py + 8, "Curve bend", { color: th.dispText, size: 8.5, align: "left" });
@@ -208,7 +209,7 @@
     const NN = st.resp ? st.resp.length : NB, bf = st.bf || bandF;
     let peakB = 0; if (st.resp) for (let b = 1; b < NN; b++) if (Math.abs(st.resp[b]) > Math.abs(st.resp[peakB])) peakB = b;
     const P0 = panel(c, th, W - dw - 8, [["Max change", st.resp ? `${sgn(st.resp[peakB])} dB @ ${Math.round(bf(peakB))} Hz` : "", th.orange, "Largest Change", "The biggest boost or cut the effect makes, in dB, and the pitch where it happens. Measured as output spectrum minus input spectrum."]],
-      "Measured Response", "Shows how the effect changes each pitch right now: above the centre line it boosts, below it cuts. A level strip below compares input and output over time.");
+      "Measured Response", "Shows how the effect changes each pitch right now: above the centre line it boosts, below it cuts. A level strip below compares input and output over time.", 15);
     const P = lgRow(c, th, P0, [[th.cyan, "Response", "Output spectrum minus input spectrum, per pitch. Above the middle line is a boost, below is a cut."], [th.orange, "Peak or dip", "Dots on the biggest boosts and cuts (more than 3 dB)."], [th.scale, "In level", "Input level over time, grey area in the strip below."], [th.orange, "Out level", "Output level over time, orange line in the strip below."]]);
     if (!st.resp) return;
     const rh = P.ph - 38, mid = P.py + rh / 2, yOf = g => mid - Math.max(-15, Math.min(15, g)) / 15 * (rh / 2 - 2);
@@ -246,6 +247,10 @@
     hint(P.px, P.py, 22, rh, "Gain Scale", "Boost or cut in dB. 0 is no change.");
   }
 
+  // Before the first measurement arrives (real audio still loading) the state is empty: start it with silence.
+  const SILENT = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 0 };
+  const wrap = f => (c, th, st, ps, vals) => { if (!st.zz && !st.lz) live(st, SILENT, 0); return f(c, th, st, ps, vals); };
+
   DESIGNS["Unclassified"] = {
     effect: "CStrip",
     refs: [["EQEightL12.png", "EQ Eight"], ["SaturatorL12.png", "Saturator"], ["CompressorTransferCurveL12.png", "Compressor transfer curve"]],
@@ -255,17 +260,17 @@
         why: "Live spectrum analyser with the input in grey, the output in cyan and the change shaded orange, like EQ Eight.",
         bullets: ["FFT spectrum of input and output, 30 Hz to 20 kHz", "Orange area = difference between output and input", "Driven by the audio in and the audio out",
           "Live: grey = specIn, cyan = specOut (48 bands, 22 Hz to 18 kHz, -100..-20 dB, release 40 dB/s); orange shading = out - in"],
-        draw: drawA },
+        draw: wrap(drawA) },
       { id: "B", name: "Transfer curve", short: "Curve", width: 700, step, live,
         why: "A measured plot of output level against input level, with scattered live points and a fitted curve, like Compressor's transfer curve and Saturator.",
         bullets: ["Scatter of input peak vs output peak, orange fitted curve", "Bars show how much the curve bends away from the straight line", "Driven by input and output peak levels (the In / Out meters are in the gain strip)",
           "Live: changed to amplitude in (-1..1) vs mean output per bin (m.xfer, linear, not dB), held where a bin has no data; no scatter. Bars = mean |out - in| per input-amplitude zone (curve bend), not harmonic levels"],
-        draw: drawB },
+        draw: wrap(drawB) },
       { id: "C", name: "Measured response", short: "Response", width: 700, step, live,
         why: "The frequency response the device has right now (output divided by input), with nodes at peaks and dips, plus a level strip.",
         bullets: ["Response curve = output spectrum minus input spectrum, ±15 dB", "Dots mark the biggest boosts and cuts, readout of the largest", "Level history strip below, in vs out",
           "Live: response = specOut - specIn per band (held where specIn < -80 dB); level strip = held channel peaks"],
-        draw: drawC },
+        draw: wrap(drawC) },
     ],
   };
 })();

@@ -19,16 +19,40 @@ const HEAD_H = 18;      // device title bar
 function tok() {
   const t = S.themes[S.theme];
   const light = S.theme === "light";
-  return {
-    body: t.DetailViewBackground, text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
+  const th = {
+    // structure (design/RUBRIC.md): tiles on a lighter background, 2 px gutters between them
+    gutter: t.SurfaceHighlight, tile: t.SurfaceBackground, divider: light ? "#8a8a8a" : "#262626",
+    body: t.SurfaceHighlight, panel: t.SurfaceBackground,
+    text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
     display: t.RetroDisplayBackground, dline: t.RetroDisplayBackgroundLine,
     orange: t.RetroDisplayForeground, cyan: t.RetroDisplayForeground2, arc: t.RangeDefault,
     track: light ? "#8f8f8f" : "#1e1e1e", needle: light ? "#121212" : "#d9d9d9",
     ctrlBg: t.ControlBackground, frame: light ? "#4f4f4f" : "#111111", on: t.ViewControlOn,
     meterBg: t.MeterBackground, scale: t.RetroDisplayScaleText.slice(0, 7), title: t.RetroDisplayTitle,
-    dispText: light ? "#cfcfcf" : "#b5b5b5", panel: light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)",
+    dispText: light ? "#cfcfcf" : "#b5b5b5",
     green: "#1ec15a", greenDim: "#0f6b33",
   };
+  // in the device: the user's own Live theme (live.colors), when it reported
+  if (S.live) for (const k in S.live) th[k] = S.live[k];
+  return th;
+}
+
+// ---------------------------------------------------------------- structure (design/RUBRIC.md)
+// A tile holds one group of things (rule 1). Flat, radius 1, no border.
+function tile(c, th, x, y, w, h) { rr(c, x, y, w, h, 1, th.tile); }
+// A screen shows measurements (rule 2). It is a tile of its own.
+function screen(c, th, x, y, w, h) { rr(c, x, y, w, h, 2, th.display); }
+// A strip at the top (or bottom) edge of a screen for readouts, legend and small buttons,
+// split from the plot by a 1 px line (rule 2.3). Returns the y of the text baseline.
+function strip(c, th, x, y, w, h = 18, bottom = false) {
+  c.fillStyle = th.dline;
+  c.fillRect(x + 3, bottom ? y : y + h - 1, w - 6, 1);
+  return bottom ? y + h - 5 : y + h - 6;
+}
+// A 1 px line between two groups in one tile (rule 4.4).
+function divider(c, th, x, y, h, horizontal = false, w = 0) {
+  c.fillStyle = th.divider;
+  if (horizontal) c.fillRect(x, y, w, 1); else c.fillRect(x, y, 1, h);
 }
 
 // ---------------------------------------------------------------- signal simulation
@@ -246,19 +270,42 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-function waveScroll(c, th, x, y, w, h, hist, key, color) {
+// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
+// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
+// The state lives on `holder` under `key`, so each plot keeps its own zoom.
+function fit(holder, key, peak, target = 0.9) {
+  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
+  const k = "_fit_" + key, g = holder[k] || want;
+  holder[k] = want < g ? want : g + (want - g) * 0.03;
+  return holder[k];
+}
+// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
+function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
+// peak of numeric fields `keys` over the newest n entries of a history
+function histPeak(hist, keys, n) {
+  let p = 0;
+  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
+  return p;
+}
+
+// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
+// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+  const n = Math.min(hist.length, w);
+  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-  const mid = y + h / 2, n = Math.min(hist.length, w);
+  const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
-  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - hist[hist.length - 1 - i][key] * h * 0.46);
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + hist[hist.length - 1 - i][key] * h * 0.46 * (0.7 + 0.3 * Math.abs(noise(i))));
+  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - Math.min(h / 2, hist[hist.length - 1 - i][key] * a));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + Math.min(h / 2, hist[hist.length - 1 - i][key] * a * (0.7 + 0.3 * Math.abs(noise(i)))));
   c.fill(); c.restore();
+  return gain;
 }
 // Decay display. With real measurements (st.envHist: output RMS dB at ~30 Hz, newest last) it
 // draws the last 3 s of output level and estimates the decay time as 3 x the time the level
 // takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
-  rr(c, x, y, w, h, 3, th.display);
+  screen(c, th, x, y, w, h);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
@@ -322,7 +369,7 @@ function legend(c, th, x, y, items, o = {}) {
 
 // Several options of one category in one device, switched by the View selector at the top of
 // the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
-// own state (and history), so switching is instant. Narrower views are centred.
+// own state (and history), so switching is instant. Narrower views start at the left.
 function composeViews(des, ids) {
   const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
   const W = Math.max(...opts.map(o => o.width));
@@ -342,8 +389,11 @@ function composeViews(des, ids) {
     },
     draw(c, th, st, ps, vals) {
       const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
-      const dx = Math.round((W - o.width) / 2);
+      // a narrower view starts at the left; a plain tile fills the rest up to the Input/Output
+      // column, so no bare background shows (RUBRIC 1.1)
+      const dx = 0, gap = W - o.width;
       st.dx = dx;
+      if (gap > 0) tile(c, th, o.width - GAIN_W - 4, HEAD_H + 4, gap - 2, DEVICE_H - 8);
       c.save(); c.translate(dx, 0);
       S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
       try { o.draw(c, th, sub(st)[v], ps, vals); }
@@ -370,8 +420,8 @@ function wrapText(c, x, y, w, text, o = {}) {
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
   if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
-  const y = HEAD_H + 6, h = DEVICE_H - 12;
-  rr(c, x, y, GAIN_W, h, 3, th.panel);
+  const y = HEAD_H + 4, h = DEVICE_H - 8;
+  tile(c, th, x, y, GAIN_W, h);
   let top = y;
   if (S.views) {                                      // view selector at the top of the column
     viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
@@ -759,18 +809,21 @@ function makeCanvas(mg, opts) {
   }
 
   function dials(c, th, ps, vals, W) {
-    const n = ps.length;
-    if (!n) { rr(c, W - 92, HEAD_H + 4, 88, DEVICE_H - 8, 3, th.panel); txt(c, W - 48, HEAD_H + 88, "No controls", { color: th.dim });
+    const n = ps.length, y = HEAD_H + 4, h = DEVICE_H - 8;
+    if (!n) { tile(c, th, W - 98, y, 96, h); txt(c, W - 50, HEAD_H + 88, "No controls", { color: th.dim });
       return 96; }
     const rows = n <= 5 ? 1 : 2, cols = Math.ceil(n / rows), cw = n > 10 ? 51 : 52, w = cols * cw;
-    knobGrid(c, th, ps, { x: W - w - 4, y: HEAD_H + 4, w, h: DEVICE_H - 8 }, cols, vals, cw);
-    return w + 8;
+    const tw = w + 8;
+    tile(c, th, W - 2 - tw, y, tw, h);
+    knobGrid(c, th, ps, { x: W - 2 - tw + 4, y, w, h }, cols, vals, cw);
+    return tw;
   }
-  function panel(c, th, w, readouts, dTitle, dText) {
+  function panel(c, th, w, readouts, dTitle, dText, bot = 0) {
     const x = 4, y = HEAD_H + 4, h = DEVICE_H - 8;
-    rr(c, x, y, w, h, 3, th.display);
+    screen(c, th, x, y, w, h);
     menu(c, th, x + 4, y + 3, 104, "CStrip"); arrows(c, th, x + 112, y + 3);
-    c.fillStyle = th.dline; c.fillRect(x, y + 21, w, 1);
+    strip(c, th, x, y, w, 22);
+    if (bot) strip(c, th, x, y + h - bot, w, bot, true);
     let rx = x + w - 6;
     hint(x, y, w, h, dTitle || "Display", dText || "Shows what the effect does to the sound, measured by comparing the input and the output.");
     readouts.slice().reverse().forEach(r => {
@@ -779,7 +832,7 @@ function makeCanvas(mg, opts) {
       txt(c, rx, y + 14, r[0], { color: th.dispText, align: "right" }); rx -= r[0].length * 5.6 + 12;
       hint(rx + 8, y + 3, r0 - rx, 15, r[3] || r[0], r[4] || "");
     });
-    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32, lx: x + 146, ly: y + 14 };
+    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const sgn = (v, p = 1) => (v >= 0 ? "+" : "") + v.toFixed(p);
@@ -790,7 +843,7 @@ function makeCanvas(mg, opts) {
       c.fillStyle = th.dline; c.fillRect(x, py, 1, ph - 10); txt(c, x, py + ph - 1, s, { color: th.scale, size: 8.5 }); });
   };
   // legend row at the top of the display; returns the display area below it
-  const lgRow = (c, th, P0, items, o) => { legend(c, th, P0.px + 1, P0.py + 8, items, o); return Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 }); };
+  const lgRow = (c, th, P0, items, o) => { legend(c, th, P0.x + 6, P0.y + P0.h - 4, items, o); return P0; };
   const fx = (px, pw, b, n) => px + pw * b / ((n || NB) - 1);
 
   // ---------- A: spectrum in vs out
@@ -825,13 +878,12 @@ function makeCanvas(mg, opts) {
     const W = 632, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P0 = panel(c, th, W - dw - 8, [["In", `${Math.max(-60, st.inDb || -60).toFixed(0)} dB`, th.cyan, "Input Level", "The peak level going in, in dB. Measured at the input of the device."], ["Out", `${Math.max(-60, st.outDb || -60).toFixed(0)} dB`, th.orange, "Output Level", "The peak level coming out, in dB. Measured at the output of the device."]],
-      "Transfer Curve", "Plots output level against input level. A straight diagonal line means the effect changes nothing; a bent line means it compresses or saturates.");
+      "Transfer Curve", "Plots output level against input level. A straight diagonal line means the effect changes nothing; a bent line means it compresses or saturates.", 15);
     const P = lgRow(c, th, P0, [[th.cyan, "Samples", "Each cyan dot is one measurement of input against output."], [th.orange, "Curve", "The average output for each input level: the transfer curve the effect has right now."], [th.scale, "No change", "The straight diagonal line: output equals input."]]);
     if (st.real) return drawBReal(c, th, st, P);
     if (!st.pts) return;
     const sz = P.ph - 12, gx = P.px + 20, gy = P.py;
     const X = d => gx + sz * (Math.min(0, Math.max(-56, d)) + 56) / 56, Y = d => gy + sz * (1 - (Math.min(0, Math.max(-56, d)) + 56) / 56);
-    c.fillStyle = th.panel; c.fillRect(gx, gy, sz, sz);
     clipTo(c, gx, gy, sz, sz);
     c.strokeStyle = th.dline; c.lineWidth = 1;
     [-48, -36, -24, -12].forEach(d => { c.beginPath(); c.moveTo(X(d), gy); c.lineTo(X(d), gy + sz); c.moveTo(gx, Y(d)); c.lineTo(gx + sz, Y(d)); c.stroke(); });
@@ -862,7 +914,6 @@ function makeCanvas(mg, opts) {
   function drawBReal(c, th, st, P) {
     const sz = P.ph - 12, gx = P.px + 20, gy = P.py;
     const X = v => gx + sz * (Math.max(-1, Math.min(1, v)) + 1) / 2, Y = v => gy + sz * (1 - (Math.max(-1, Math.min(1, v)) + 1) / 2);
-    c.fillStyle = th.panel; c.fillRect(gx, gy, sz, sz);
     clipTo(c, gx, gy, sz, sz);
     c.strokeStyle = th.dline; c.lineWidth = 1;
     [-0.5, 0, 0.5].forEach(v => { c.beginPath(); c.moveTo(X(v), gy); c.lineTo(X(v), gy + sz); c.moveTo(gx, Y(v)); c.lineTo(gx + sz, Y(v)); c.stroke(); });
@@ -875,7 +926,7 @@ function makeCanvas(mg, opts) {
     c.strokeStyle = th.scale; c.strokeRect(gx + 0.5, gy + 0.5, sz - 1, sz - 1);
     [-1, 0, 1].forEach(v => { txt(c, X(v) + (v === 1 ? -1 : v === -1 ? 1 : 0), gy + sz + 9, String(v), { color: th.scale, size: 8, align: v === 1 ? "right" : v === -1 ? "left" : "center" });
       txt(c, gx - 3, Y(v) + (v === 1 ? 7 : 3), String(v), { color: th.scale, size: 8, align: "right" }); });
-    txt(c, gx + sz * 0.8, gy + sz + 9, "In (amplitude)", { color: th.dispText, size: 8 });
+    txt(c, gx + sz * 0.75, gy + sz + 9, "In", { color: th.dispText, size: 8 });
     txt(c, gx - 3, Y(0.5) + 3, "Out", { color: th.dispText, size: 8, align: "right" });
     const x0 = gx + sz + 16, bw = P.x + P.w - x0 - 6;
     txt(c, x0, P.py + 8, "Curve bend", { color: th.dispText, size: 8.5, align: "left" });
@@ -897,7 +948,7 @@ function makeCanvas(mg, opts) {
     const NN = st.resp ? st.resp.length : NB, bf = st.bf || bandF;
     let peakB = 0; if (st.resp) for (let b = 1; b < NN; b++) if (Math.abs(st.resp[b]) > Math.abs(st.resp[peakB])) peakB = b;
     const P0 = panel(c, th, W - dw - 8, [["Max change", st.resp ? `${sgn(st.resp[peakB])} dB @ ${Math.round(bf(peakB))} Hz` : "", th.orange, "Largest Change", "The biggest boost or cut the effect makes, in dB, and the pitch where it happens. Measured as output spectrum minus input spectrum."]],
-      "Measured Response", "Shows how the effect changes each pitch right now: above the centre line it boosts, below it cuts. A level strip below compares input and output over time.");
+      "Measured Response", "Shows how the effect changes each pitch right now: above the centre line it boosts, below it cuts. A level strip below compares input and output over time.", 15);
     const P = lgRow(c, th, P0, [[th.cyan, "Response", "Output spectrum minus input spectrum, per pitch. Above the middle line is a boost, below is a cut."], [th.orange, "Peak or dip", "Dots on the biggest boosts and cuts (more than 3 dB)."], [th.scale, "In level", "Input level over time, grey area in the strip below."], [th.orange, "Out level", "Output level over time, orange line in the strip below."]]);
     if (!st.resp) return;
     const rh = P.ph - 38, mid = P.py + rh / 2, yOf = g => mid - Math.max(-15, Math.min(15, g)) / 15 * (rh / 2 - 2);
@@ -935,6 +986,10 @@ function makeCanvas(mg, opts) {
     hint(P.px, P.py, 22, rh, "Gain Scale", "Boost or cut in dB. 0 is no change.");
   }
 
+  // Before the first measurement arrives (real audio still loading) the state is empty: start it with silence.
+  const SILENT = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 0 };
+  const wrap = f => (c, th, st, ps, vals) => { if (!st.zz && !st.lz) live(st, SILENT, 0); return f(c, th, st, ps, vals); };
+
   DESIGNS["Unclassified"] = {
     effect: "CStrip",
     refs: [["EQEightL12.png", "EQ Eight"], ["SaturatorL12.png", "Saturator"], ["CompressorTransferCurveL12.png", "Compressor transfer curve"]],
@@ -944,17 +999,17 @@ function makeCanvas(mg, opts) {
         why: "Live spectrum analyser with the input in grey, the output in cyan and the change shaded orange, like EQ Eight.",
         bullets: ["FFT spectrum of input and output, 30 Hz to 20 kHz", "Orange area = difference between output and input", "Driven by the audio in and the audio out",
           "Live: grey = specIn, cyan = specOut (48 bands, 22 Hz to 18 kHz, -100..-20 dB, release 40 dB/s); orange shading = out - in"],
-        draw: drawA },
+        draw: wrap(drawA) },
       { id: "B", name: "Transfer curve", short: "Curve", width: 700, step, live,
         why: "A measured plot of output level against input level, with scattered live points and a fitted curve, like Compressor's transfer curve and Saturator.",
         bullets: ["Scatter of input peak vs output peak, orange fitted curve", "Bars show how much the curve bends away from the straight line", "Driven by input and output peak levels (the In / Out meters are in the gain strip)",
           "Live: changed to amplitude in (-1..1) vs mean output per bin (m.xfer, linear, not dB), held where a bin has no data; no scatter. Bars = mean |out - in| per input-amplitude zone (curve bend), not harmonic levels"],
-        draw: drawB },
+        draw: wrap(drawB) },
       { id: "C", name: "Measured response", short: "Response", width: 700, step, live,
         why: "The frequency response the device has right now (output divided by input), with nodes at peaks and dips, plus a level strip.",
         bullets: ["Response curve = output spectrum minus input spectrum, ±15 dB", "Dots mark the biggest boosts and cuts, readout of the largest", "Level history strip below, in vs out",
           "Live: response = specOut - specIn per band (held where specIn < -80 dB); level strip = held channel peaks"],
-        draw: drawC },
+        draw: wrap(drawC) },
     ],
   };
 })();
@@ -1041,7 +1096,36 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-function anything() {} // category, pvalue, …: not needed for drawing
+// live.colors "everything": one message per theme colour ("live_surface_bg r g b a")
+const LIVE_COLORS = {};
+function anything() {
+  const n = messagename;
+  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
+  LIVE_COLORS[n] = arrayfromargs(arguments);
+  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
+  liveTheme();
+}
+// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+const LIVE_MAP = {
+  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
+  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+};
+const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
+let themeTask = null;
+function liveTheme() {
+  // the colours arrive as a burst of messages: apply once, after the burst
+  if (themeTask) return;
+  themeTask = new Task(function () {
+    themeTask = null;
+    const L = {};
+    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
+    S.live = L;
+    mgraphics.redraw();
+  });
+  themeTask.schedule(20);
+}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -1121,20 +1205,21 @@ function publishLayout() {
 // ---------------------------------------------------------------- Info View
 // Live shows a hovered object's annotation in its Info View. The display sets its own
 // annotation to the hint under the mouse; dials get their effect's control name and text.
-let hints = [], lastHint = null;
+let hints = [], lastHint = "";
 function onidle(x, y) {
   let best = null;
   const yy = y + HEAD_H;
   for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
-  if (best === lastHint) return;
-  lastHint = best;
+  const key = best ? best.title + "|" + best.text : "";
+  if (key === lastHint) return;               // hints are rebuilt on every paint: compare text
+  lastHint = key;
   log("hover", best ? best.title : "-");
   try {
     BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
     BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
   } catch (e) {}
 }
-function onidleout() { lastHint = null; }
+function onidleout() { lastHint = ""; }
 let annotated = "";
 function annotateDials() {
   const key = (S.effName || "") + params.map(p => p.name).join("|");
@@ -1157,6 +1242,7 @@ function paint() {
   const th = tok();
   try {
     S.hints = [];
+    c.fillStyle = th.gutter; c.fillRect(0, HEAD_H, OPT.width, DEVICE_H);   // gutters (RUBRIC 1.1)
     OPT.draw(c, th, st, params, params.map(() => 0.5));
     hints = S.hints;
   } catch (e) {
@@ -1168,4 +1254,4 @@ function paint() {
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
+function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

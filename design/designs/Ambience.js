@@ -12,7 +12,7 @@
   };
   const dr = t => drums(((t % 2) + 2) % 2);
   const MENU = "TapeDelay";
-  const Y0 = HEAD_H + 6, FH = DEVICE_H - 12;
+  const Y0 = HEAD_H + 4, FH = DEVICE_H - 8;
 
   // Simulated effect: a delayed, decaying copy (tap time moves slowly) plus a short modulated delay.
   function core(st, t, dt) {
@@ -65,7 +65,7 @@
     s.fb = s.taps.length > 1 ? clamp(s.taps[1].a / Math.max(0.01, s.taps[0].a), 0, 1) : 0;
     s.h.push({ i: fin(m.inPk, 0), o: fin(m.outPk, 0), w: s.wet });
     if (s.h.length > 900) s.h.shift();
-    // zoomed scopes (mono = mean of L and R): in, out, out - in; slow common gain, own gain for the difference
+    // scopes (mono = mean of L and R): in, out, out - in; lanes() zooms them with fit()
     const iL = m.inScopeL || [], iR = m.inScopeR || [], oL = m.scopeL || [], oR = m.scopeR || [];
     const n = Math.min(iL.length, iR.length, oL.length, oR.length), sc = s.sc;
     sc.i = []; sc.o = []; sc.d = [];
@@ -75,9 +75,7 @@
       sc.i.push(a); sc.o.push(o); sc.d.push(o - a);
       pk = Math.max(pk, Math.abs(a), Math.abs(o)); pd = Math.max(pd, Math.abs(o - a));
     }
-    sc.pk = Math.max(pk, (sc.pk || 0) - 0.5 * dt); sc.pd = Math.max(pd, (sc.pd || 0) - 0.5 * dt);
-    sc.g += (clamp(0.8 / Math.max(0.02, sc.pk), 1, 10) - sc.g) * 0.1;
-    sc.gd += (clamp(0.8 / Math.max(0.0005, sc.pd), 1, 100) - sc.gd) * 0.1;
+    sc.pk = pk; sc.pd = pd;                                // peaks of this frame; lanes() zooms with fit()
     // spectra: 48 bands, fast attack, 24 dB/s release
     for (let i = 0; i < 48; i++) {
       s.si[i] = Math.max(clamp(fin((m.specIn || [])[i], -120), -120, 6), (s.si[i] === undefined ? -120 : s.si[i]) - 24 * dt);
@@ -85,8 +83,8 @@
     }
   }
 
-  function ctl(c, th, ps, vals, a) {
-    rr(c, a.x, a.y, a.w, a.h, 3, th.panel);
+  function ctl(c, th, ps, vals, a, noTile) {
+    if (!noTile) tile(c, th, a.x, a.y, a.w, a.h);
     if (!ps.length) {
       txt(c, a.x + a.w / 2, a.y + a.h / 2 - 1, "No controls", { color: th.dim, size: 10.5 });
       txt(c, a.x + a.w / 2, a.y + a.h / 2 + 11, "this effect has no dials", { color: th.dim, size: 8.5 });
@@ -115,10 +113,11 @@
   // ---- A: echo taps (cross-correlation of output against input)
   function taps(c, th, x, y, w, h, st) {
     const s = st.am;
-    rr(c, x, y, w, h, 3, th.display);
-    hint(x, y, w, h, "Echo Taps Display", "Each bar is one echo, placed at its delay time. Taller means louder. Measured by comparing the output with the input.");
+    screen(c, th, x, y, w, h);
+    strip(c, th, x, y, w, 22);
+    hint(x, y + 22, w, h - 22, "Echo Taps Display", "Each bar is one echo, placed at its delay time. Taller means louder. Measured by comparing the output with the input.");
     c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-    const T = s.live ? XT : 1.6, px = t => x + 12 + (w - 24) * t / T, base = y + h - 17, top = y + 30;
+    const T = s.live ? XT : 1.6, px = t => x + 12 + (w - 24) * t / T, base = y + h - 17, top = y + 32;
     c.strokeStyle = th.dline; c.lineWidth = 1;
     for (let i = 1; i < 4; i++) { const yy = top + (base - top) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
     // dry hit at 0, then repeats at k * tau decaying by the measured ratio; small cluster of early taps
@@ -148,10 +147,10 @@
     hint(x + 8, top, w - 16, base - top, "Echo Bars", "Bars further right are later echoes. Numbers count the echoes. A flat display means the output equals the input.");
     hint(x + 8, top, 9, base - top, "Dry Hit", "The original sound, at time zero. All echoes are placed relative to it.");
     hint(x + 8, y + h - 14, w - 16, 12, "Time Axis", s.live ? "Time after the dry hit, 0 to 43 ms. Longer echoes cannot be measured." : "Time after the dry hit.");
-    txt(c, x + 8, y + 13, "Echo taps", { color: th.scale, align: "left" });
-    const e = ph(c, th, x + 84, y + 13, "Delay", s.live && !s.taps.length ? "-" : (s.live ? `${s.ms.toFixed(1)} ms` : `${(s.tau * 1000).toFixed(0)} ms`), th.orange, "Echo Delay", "The time of the first echo after the original sound. Measured from the peak in the cross-correlation of output against input.");
-    ph(c, th, e + 14, y + 13, "Repeat", s.live && s.taps.length < 2 ? "-" : `${(s.fb * 100).toFixed(0)}%`, th.orange, "Echo Repeat Level", "How loud each echo is compared with the one before. Higher means a longer tail. Measured from the first two echo peaks.");
-    legR(c, th, x + w - 8, y + 13, [[th.dispText, "Dry", "Grey bar: the original sound at time zero."], [th.cyan, "Echo", "Cyan bars: the echoes the effect adds."]].concat(s.live ? [] : [[th.orange, "Now", "Orange line: the position of the sound in the loop right now."]]));
+    txt(c, x + 8, y + 15, "Echo taps", { color: th.scale, align: "left" });
+    const e = ph(c, th, x + 84, y + 15, "Delay", s.live && !s.taps.length ? "-" : (s.live ? `${s.ms.toFixed(1)} ms` : `${(s.tau * 1000).toFixed(0)} ms`), th.orange, "Echo Delay", "The time of the first echo after the original sound. Measured from the peak in the cross-correlation of output against input.");
+    ph(c, th, e + 14, y + 15, "Repeat", s.live && s.taps.length < 2 ? "-" : `${(s.fb * 100).toFixed(0)}%`, th.orange, "Echo Repeat Level", "How loud each echo is compared with the one before. Higher means a longer tail. Measured from the first two echo peaks.");
+    legR(c, th, x + w - 8, y + 15, [[th.dispText, "Dry", "Grey bar: the original sound at time zero."], [th.cyan, "Echo", "Cyan bars: the echoes the effect adds."]].concat(s.live ? [] : [[th.orange, "Now", "Orange line: the position of the sound in the loop right now."]]));
     if (s.live) {
       [0, 10, 20, 30, 40].forEach((ms, i) => txt(c, px(ms / 1000), y + h - 5, i ? `${ms} ms` : "0", { color: th.scale, size: 8.5, align: i ? "center" : "left" }));
       if (!s.taps.length) txt(c, x + w / 2, y + h / 2 + 4, s.wet > 0.03 ? "no echo peak found" : "output equals input: no echo added", { color: th.dim, size: 10 });
@@ -162,10 +161,12 @@
   // ---- B: zoomed waveform lanes in / out / difference
   function lanes(c, th, x, y, w, h, st) {
     const s = st.am, env = s.live ? 1 : Math.min(1, dr(st.t).env + 0.15);
-    rr(c, x, y, w, h, 3, th.display);
-    hint(x, y, w, h, "Wet Signal Display", "Three zoomed waveforms, about 5 ms wide: the input, the output, and what the effect added. Measured from the input and output signals.");
-    legend(c, th, x + 8, y + 10, [[th.dispText, "In", "Grey line: the signal going into the effect."], [th.cyan, "Out", "Cyan line: the signal coming out of the effect."], [th.orange, "Out−In", "Orange line: output minus input. This is only what the effect added, magnified."]], { line: true });
-    const lh = (h - 18) / 3, gx = x + 34, gw = w - 40;
+    screen(c, th, x, y, w, h);
+    strip(c, th, x, y, w, 22);                                 // top strip: menu and readouts (drawn by the caller)
+    const by = strip(c, th, x, y + h - 16, w, 16, true);       // bottom strip: legend and zoom
+    hint(x, y + 22, w, h - 38, "Wet Signal Display", "Three zoomed waveforms, about 5 ms wide: the input, the output, and what the effect added. Measured from the input and output signals.");
+    legend(c, th, x + 8, by, [[th.dispText, "In", "Grey line: the signal going into the effect."], [th.cyan, "Out", "Cyan line: the signal coming out of the effect."], [th.orange, "Out−In", "Orange line: output minus input. This is only what the effect added, magnified."]], { line: true });
+    const top = y + 26, lh = (h - 16 - 4 - 26) / 3, gx = x + 34, gw = w - 40;
     const src = u => 0.6 * Math.sin(u * 6.28) + 0.3 * Math.sin(u * 6.28 * 2.7 + 1) + 0.15 * Math.sin(u * 6.28 * 5.1);
     const span = 3, cyc = st.t * 0.4;
     const f = (xx, wet) => {
@@ -173,31 +174,42 @@
       const tau = (s.ms / 1000) * 220 * (1 + 0.5 * Math.sin(st.t * 3 + xx * 0.01)) / 10;
       return wet ? src(u - tau * 0.12) : src(u);
     };
-    const defs = [["In", th.dispText, xx => f(xx, 0), 1], ["Out", th.cyan, xx => 0.6 * f(xx, 0) + 0.7 * f(xx, 1), 1],
-      ["Out − In", th.orange, xx => 0.7 * f(xx, 1) - 0.4 * f(xx, 0), 2.4]];
-    defs.forEach(([name, col, fn, gain], k) => {
-      const ly = y + 15 + k * lh, mid = ly + lh / 2;
-      hint(x + 2, ly + 1, w - 4, lh - 2, ["Input Waveform", "Output Waveform", "Added Signal Waveform"][k], ["The signal going into the effect, zoomed in.", "The signal coming out of the effect, zoomed in.", "Output minus input: only what the effect added. It is magnified so small changes show."][k] + " Measured from the last 64 samples.");
+    const fns = [xx => f(xx, 0), xx => 0.6 * f(xx, 0) + 0.7 * f(xx, 1), xx => 0.7 * f(xx, 1) - 0.4 * f(xx, 0)];
+    // sample values per lane (before zoom)
+    const data = fns.map((fn, k) => {
+      if (s.live) return s.sc[["i", "o", "d"][k]];
+      const a = []; for (let i = 0; i <= gw; i += 2) a.push(fn(i) * env); return a;
+    });
+    const pkOf = a => a.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    // RUBRIC 2.6: in and out share one zoom; the difference has its own
+    const gIO = fit(s, "io", Math.max(pkOf(data[0]), pkOf(data[1])));
+    const gD = fit(s, "diff", pkOf(data[2]));
+    const defs = [["In", th.dispText, gIO], ["Out", th.cyan, gIO], ["Out − In", th.orange, gD]];
+    defs.forEach(([name, col, gain], k) => {
+      const ly = top + k * lh, mid = ly + lh / 2, arr = data[k];
+      hint(x + 2, ly + 1, w - 4, lh - 2, ["Input Waveform", "Output Waveform", "Added Signal Waveform"][k], ["The signal going into the effect, zoomed in.", "The signal coming out of the effect, zoomed in.", "Output minus input: only what the effect added. It has its own zoom so small changes show."][k] + " Measured from the last 64 samples.");
       c.save(); c.beginPath(); c.rect(gx, ly + 1, gw, lh - 2); c.clip();
       c.fillStyle = th.meterBg; c.fillRect(gx, ly + 1, gw, lh - 2);
       c.fillStyle = th.dline; c.fillRect(gx, mid, gw, 1);
       c.strokeStyle = col; c.lineWidth = 1.8; c.beginPath();
-      if (s.live) {
-        const arr = s.sc[["i", "o", "d"][k]], gg = k === 2 ? s.sc.gd : s.sc.g;
-        arr.forEach((v0, j) => { const v = clamp(v0 * gg * 0.9, -1, 1) * (lh / 2 - 3), xx = gx + gw * j / Math.max(1, arr.length - 1); j ? c.lineTo(xx, mid - v) : c.moveTo(xx, mid - v); });
-      } else
-      for (let i = 0; i <= gw; i += 2) { const v = clamp(fn(i) * env * 0.9 * gain, -1, 1) * (lh / 2 - 3); i ? c.lineTo(gx + i, mid - v) : c.moveTo(gx, mid - v); }
+      arr.forEach((v0, j) => { const v = clamp(v0 * gain, -1, 1) * (lh / 2 - 2), xx = gx + gw * j / Math.max(1, arr.length - 1); j ? c.lineTo(xx, mid - v) : c.moveTo(xx, mid - v); });
       c.stroke();
       c.restore();
-      if (s.live) { txt(c, x + 5, mid + 3, `×${(k === 2 ? s.sc.gd : s.sc.g).toFixed(k === 2 ? 0 : 1)}`, { color: th.scale, align: "left", size: 8 }); hint(x + 3, mid - 5, 28, 11, "Zoom Gain", "How much this lane is magnified so quiet sound stays visible."); }
+      if (gain > 1.05) { txt(c, x + 5, mid + 3, `+${(20 * Math.log10(gain)).toFixed(0)} dB`, { color: th.dispText, align: "left", size: 8 }); hint(x + 3, mid - 5, 30, 11, "Lane Zoom", "How much this lane is enlarged so its loudest point fills the lane. " + (k < 2 ? "Input and output share it." : "The added signal has its own zoom.")); }
     });
+    const zt = zoomText(gIO);
+    if (zt) {
+      txt(c, x + w - 8, by, zt, { color: th.dispText, size: 8.5, align: "right" });
+      hint(x + w - 70, y + h - 15, 66, 13, "Zoom", "The input and output waveforms are enlarged so the loudest point fills the lane. The number says by how much; quiet signals get a larger zoom.");
+    }
   }
 
   // ---- C: spectrum, input vs output, comb filtering
   function spectrum(c, th, x, y, w, h, st) {
     const s = st.am, d = s.live ? { env: 0 } : dr(st.t);
-    rr(c, x, y, w, h, 3, th.display);
-    const top = y + 8, base = y + h - 14, hh = base - top;
+    screen(c, th, x, y, w, h);
+    strip(c, th, x, y, w, 22);
+    const top = y + 28, base = y + h - 14, hh = base - top;
     hint(x, y, w, h, "Comb Spectrum Display", "Loudness at each pitch, low pitch on the left. The grey line is the input, the cyan area is the output. Dips in the output are comb filter notches. Measured from 48 bands of input and output.");
     hint(x + 8, y + h - 13, w - 16, 12, "Frequency Scale", "Pitch from 20 Hz on the left to 20 kHz on the right, marked at 100 Hz, 1 kHz and 10 kHz.");
     hint(x + w - 28, top, 26, hh, "Level Scale", "Loudness in dB. -20 is louder than -40.");
@@ -240,9 +252,10 @@
         bullets: ["Driven by: cross-correlation of output against input (peaks show delay times and repeat level)", "Real device: bars = cross-correlation bins over 0-43 ms only (longer echoes are not measurable); numbered peaks appear only when out differs from in", "Dials fill the left; Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
           if (!st.am) return;
-          head(c, th, 6, Y0, 112);
-          ctl(c, th, ps, vals, { x: 4, y: Y0 + 20, w: 158, h: FH - 20 });
-          taps(c, th, 166, Y0, 366, FH, st);
+          tile(c, th, 4, Y0, 158, FH);                       // selector + dials
+          head(c, th, 8, Y0 + 4, 108);
+          ctl(c, th, ps, vals, { x: 4, y: Y0 + 22, w: 158, h: FH - 22 }, true);
+          taps(c, th, 164, Y0, 374, FH, st);
           gainStrip(c, th, 608 - GAIN_W - 4, st);
         } },
       { id: "B", name: "Wet signal scope", short: "Scope", width: 588, step, live: amLive,
@@ -251,12 +264,11 @@
         draw(c, th, st, ps, vals) {
           if (!st.am) return;
           const s = st.am;
-          head(c, th, 6, Y0, 112);
-          rr(c, 164, Y0, 166, 14, 2, th.display);
-          const e = ph(c, th, 170, Y0 + 11, "Delay", s.live && !s.taps.length ? "-" : `${s.ms.toFixed(1)} ms`, th.orange, "Short Delay", "The delay of the added signal, in ms. Short values mean chorus or ensemble. Measured from the first echo peak.");
-          ph(c, th, e + 10, Y0 + 11, "Wet", `${(s.mod * 100).toFixed(0)}%`, th.orange, "Wet Share", "How much of the output is added signal. 0% is the dry sound only. Measured from the level of output minus input against the output level.");
-          lanes(c, th, 6, Y0 + 20, 324, FH - 20, st);
-          ctl(c, th, ps, vals, { x: 336, y: Y0, w: 178, h: FH });
+          lanes(c, th, 4, Y0, 328, FH, st);
+          head(c, th, 9, Y0 + 4, 92);
+          const e = ph(c, th, 146, Y0 + 15, "Delay", s.live && !s.taps.length ? "-" : `${s.ms.toFixed(1)} ms`, th.orange, "Short Delay", "The delay of the added signal, in ms. Short values mean chorus or ensemble. Measured from the first echo peak.");
+          ph(c, th, e + 10, Y0 + 15, "Wet", `${(s.mod * 100).toFixed(0)}%`, th.orange, "Wet Share", "How much of the output is added signal. 0% is the dry sound only. Measured from the level of output minus input against the output level.");
+          ctl(c, th, ps, vals, { x: 334, y: Y0, w: 184, h: FH });
           gainStrip(c, th, 588 - GAIN_W - 4, st);
         } },
       { id: "C", name: "Comb spectrum", short: "Spectrum", width: 628, step, live: amLive,
@@ -264,13 +276,12 @@
         bullets: ["Driven by: 48-band spectra of input and output, 20 Hz to 20 kHz; comb spacing = 1000 / first echo delay", "Notches in the filled curve show the comb filter; readout gives the spacing", "Menu above the spectrum, dials in one row under it; Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
           if (!st.am) return;
-          const s = st.am, dh = 80;
-          head(c, th, 6, Y0, 112);
-          rr(c, 164, Y0, 390, 14, 2, th.display);
-          legend(c, th, 170, Y0 + 11, [[th.dispText, "In", "Grey line and light fill: the spectrum of the signal going into the effect."], [th.cyan, "Out", "Cyan line and fill: the spectrum of the signal coming out. Dips are comb notches."]]);
-          ph(c, th, 400, Y0 + 11, "Comb spacing", s.live ? (s.taps.length ? `${(1000 / s.ms).toFixed(0)} Hz` : "-") : `${(1000 / (s.ms * 0.5 + 1)).toFixed(0)} Hz`, th.orange, "Comb Spacing", "The distance between notches in the output, in Hz. It is 1000 divided by the delay in ms. Measured from the first echo.");
-          spectrum(c, th, 6, Y0 + 20, 548, dh, st);
-          ctl(c, th, ps, vals, { x: 6, y: Y0 + 20 + dh + 4, w: 548, h: FH - 20 - dh - 4 });
+          const s = st.am, dh = 100;
+          spectrum(c, th, 4, Y0, 554, dh, st);
+          head(c, th, 9, Y0 + 4, 108);
+          legend(c, th, 160, Y0 + 15, [[th.dispText, "In", "Grey line and light fill: the spectrum of the signal going into the effect."], [th.cyan, "Out", "Cyan line and fill: the spectrum of the signal coming out. Dips are comb notches."]]);
+          ph(c, th, 400, Y0 + 15, "Comb spacing", s.live ? (s.taps.length ? `${(1000 / s.ms).toFixed(0)} Hz` : "-") : `${(1000 / (s.ms * 0.5 + 1)).toFixed(0)} Hz`, th.orange, "Comb Spacing", "The distance between notches in the output, in Hz. It is 1000 divided by the delay in ms. Measured from the first echo.");
+          ctl(c, th, ps, vals, { x: 4, y: Y0 + dh + 2, w: 554, h: FH - dh - 2 });
           gainStrip(c, th, 628 - GAIN_W - 4, st);
         } },
     ],

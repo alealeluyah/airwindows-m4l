@@ -208,6 +208,14 @@ async function init() {
     renderPage(); });
   const qp = new URLSearchParams(location.search);
   if (qp.get("real")) S.signal = "real";
+  // ?only=final: show just the final device of the category (screenshots, phone checks)
+  if (qp.get("only") === "final") {
+    const st = document.createElement("style");
+    st.textContent = "header, #nav, .page > :not(.opt[data-id=FINAL]), .opt .top, .opt .ctl { display: none !important }" +
+      " main, .page { display: block !important; padding: 4px !important; max-width: none !important }" +
+      " .opt { display: inline-block !important; margin: 0 !important; padding: 0 !important; border: 0 !important; box-shadow: none !important }";
+    document.head.appendChild(st);
+  }
   document.querySelectorAll("#signal button").forEach(x => x.classList.toggle("on", x.dataset.s === (S.signal || "sim")));
   if (qp.get("zoom")) S.zoom = +qp.get("zoom");
   if (qp.get("theme")) S.theme = qp.get("theme");

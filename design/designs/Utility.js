@@ -75,18 +75,22 @@
   }
 
   function dials(c, th, ps, vals, W) {
-    const n = ps.length;
-    if (!n) { rr(c, W - 92, HEAD_H + 4, 88, DEVICE_H - 8, 3, th.panel); txt(c, W - 48, HEAD_H + 88, "No controls", { color: th.dim });
+    const n = ps.length, y = HEAD_H + 4, h = DEVICE_H - 8;
+    if (!n) { tile(c, th, W - 98, y, 96, h); txt(c, W - 50, HEAD_H + 88, "No controls", { color: th.dim });
       return 96; }
     const rows = n <= 5 ? 1 : n <= 10 ? 2 : 3, cols = Math.ceil(n / rows), w = cols * 52;
-    knobGrid(c, th, ps, { x: W - w - 4, y: HEAD_H + 4, w, h: DEVICE_H - 8 }, cols, vals);
-    return w + 8;
+    const tw = w + 8;
+    tile(c, th, W - 2 - tw, y, tw, h);
+    knobGrid(c, th, ps, { x: W - 2 - tw + 4, y, w, h }, cols, vals);
+    return tw;
   }
-  function panel(c, th, w, readouts, dTitle, dText) {
+  function panel(c, th, w, readouts, dTitle, dText, bot = 0) {
     const x = 4, y = HEAD_H + 4, h = DEVICE_H - 8;
-    rr(c, x, y, w, h, 3, th.display);
+    screen(c, th, x, y, w, h);
     menu(c, th, x + 4, y + 3, 104, "EveryTrim"); arrows(c, th, x + 112, y + 3);
-    c.fillStyle = th.dline; c.fillRect(x, y + 21, w, 1);
+    strip(c, th, x, y, w, 22);
+    if (bot) strip(c, th, x, y + h - bot, w, bot, true);
+    if (bot > 15) strip(c, th, x, y + h - 15, w, 15, true);
     let rx = x + w - 6;
     hint(x, y, w, h, dTitle || "Display", dText || "Shows the stereo image and level change, measured from the left and right channels at the input and the output.");
     readouts.slice().reverse().forEach(r => {
@@ -95,7 +99,7 @@
       txt(c, rx, y + 14, r[0], { color: th.dispText, align: "right" }); rx -= r[0].length * 5.6 + 12;
       hint(rx + 8, y + 3, r0 - rx, 15, r[3] || r[0], r[4] || "");
     });
-    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32, lx: x + 146, ly: y + 14 };
+    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const lvl = d => Math.max(0, Math.min(1, 1 + d / 48));
@@ -117,8 +121,8 @@
     const W = 560, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P = panel(c, th, W - dw - 8, [["Corr", sgn(st.corrO || 0, 2), (st.corrO || 0) < 0 ? th.orange : th.cyan, "Phase Correlation", "How alike left and right are, from -1 to +1. +1 is the same signal (mono), 0 is wide, below 0 means the channels cancel. Measured from the output."]],
-      "Vectorscope", "Shows the stereo picture. Each dot is one sample: left-right moves it sideways, loudness moves it up and down. Measured from the left and right channels.");
-    legend(c, th, P.lx, P.ly, [[th.scale, "In", "The stereo picture of the input signal."], [th.cyan, "Out", "The stereo picture of the output signal."]], { line: true });
+      "Vectorscope", "Shows the stereo picture. Each dot is one sample: left-right moves it sideways, loudness moves it up and down. Measured from the left and right channels.", 15);
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.scale, "In", "The stereo picture of the input signal."], [th.cyan, "Out", "The stereo picture of the output signal."]], { line: true });
     if (!st.oL) return;
     const sz = P.ph, cx = P.px + sz / 2, cy = P.py + sz / 2, R = sz / 2 - 2;
     c.strokeStyle = th.dline; c.lineWidth = 1;
@@ -130,11 +134,19 @@
     clipTo(c, cx - R, cy - R, 2 * R, 2 * R);
     const dot = (L, Rr, col, a) => { c.globalAlpha = a; c.fillStyle = col;
       for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, s = (L[n] - Rr[n]) * 0.5; c.fillRect(cx + s * R * 1.3 - 0.75, cy - m * R * 1.3 - 0.75, 1.5, 1.5); } c.globalAlpha = 1; };
+    // one zoom for input and output (RUBRIC 2.6): the farthest point from the centre fills ~90 % of the scope
+    let pkV = 0;
+    [[st.iL, st.iR], [st.oL, st.oR]].forEach(([L, Rr]) => { for (let n = 0; n < L.length; n++) pkV = Math.max(pkV, Math.abs(L[n] + Rr[n]) * 0.75, Math.abs(L[n] - Rr[n]) * 2.5); });
+    const g = fit(st, "vec", pkV);
     const trail = (L, Rr, col, lw, al) => { c.globalAlpha = al; c.strokeStyle = col; c.lineWidth = lw; c.lineJoin = "round"; c.beginPath();
-      for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, sd = (L[n] - Rr[n]) * 0.5, X = cx + sd * R * 5, Y = cy - m * R * 1.5; n ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+      for (let n = 0; n < L.length; n++) { const m = (L[n] + Rr[n]) * 0.5, sd = (L[n] - Rr[n]) * 0.5, X = cx + sd * R * 5 * g, Y = cy - m * R * 1.5 * g; n ? c.lineTo(X, Y) : c.moveTo(X, Y); }
       c.stroke(); c.globalAlpha = 1; };
     trail(st.iL, st.iR, th.scale, 1, 0.7); trail(st.oL, st.oR, th.cyan, 1.5, 1);
     c.restore();
+    if (g > 1.05) {
+      txt(c, P.x + 86, P.y + P.h - 4, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
+      hint(P.x + 84, P.y + P.h - 13, 62, 11, "Zoom", "The stereo picture is enlarged so the farthest point fills the scope. The number says by how much; quiet signals get a larger zoom.");
+    }
     hint(cx - R, cy - R, 2 * R, 2 * R, "Vectorscope Plot", "A tall, thin trace means mono. A wide, round cloud means wide stereo. A trace along the L or R line means one channel only. Measured from the left and right samples.");
     // bars on the right of the scope
     const x0 = P.px + sz + 14, w0 = P.x + P.w - x0 - 8;
@@ -152,9 +164,9 @@
     gs(c, th, W, st);
     const wd = st.sO !== undefined && st.mO > -90 ? Math.max(0, Math.min(2, Math.pow(10, (st.sO - st.mO) / 20) * 1)) : 0;
     const P0 = panel(c, th, W - dw - 8, [["Width", `${Math.round(Math.min(wd, 1.99) * 100)} %`, th.cyan, "Stereo Width", "Side level compared with mid level of the output. 0 % is mono, 100 % is as wide as a normal mix."], ["Gain", `${sgn(st.gainD || 0)} dB`, th.orange, "Gain Change", "How much louder (+) or quieter (-) the output is than the input, in dB."]],
-      "Mid / Side", "Mid is what both channels share (the centre). Side is what differs between them (the width). Measured from the input and the output.");
-    const P = Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 });
-    legend(c, th, P0.px, P0.py + 8, [[th.cyan, "Mid out", "Mid of the output: the centre part, shared by left and right."], [th.orange, "Side out", "Side of the output: the part that differs between left and right."], [th.scale, "Input", "Mid and side of the input, drawn as grey lines and meters."]], { line: true });
+      "Mid / Side", "Mid is what both channels share (the centre). Side is what differs between them (the width). Measured from the input and the output.", 15);
+    const P = P0;
+    legend(c, th, P0.x + 6, P0.y + P0.h - 4, [[th.cyan, "Mid out", "Mid of the output: the centre part, shared by left and right."], [th.orange, "Side out", "Side of the output: the part that differs between left and right."], [th.scale, "Input", "Mid and side of the input, drawn as grey lines and meters."]], { line: true });
     if (!st.uh) return;
     const mw = 112, hx = P.px + mw + 12, hw = P.pw - mw - 12;
     // meters: mid and side, in and out
@@ -186,12 +198,11 @@
     const W = 580, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P0 = panel(c, th, W - dw - 8, [["Gain", `${sgn(st.gainD || 0)} dB`, th.orange, "Gain Change", "How much louder (+) or quieter (-) the output is than the input, in dB. Measured from the input and output levels."]],
-      "In / Out Compare", "Compares the input level and the output level over time, with the gain change between them.");
-    const P = Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 });
-    const hx = P.px, hw = P.pw, hy = P.py + 2, hh = P.ph - 24;
-    legend(c, th, P0.px, P0.py + 8, [[th.scale, "In level", "The input level over time, drawn as a grey area."], [th.cyan, "Out level", "The output level over time, drawn as a cyan line."], [th.orange, "Gain change", "Output minus input, in dB, around the centre line (range +-6 dB)."]], { line: true });
+      "In / Out Compare", "Compares the input level and the output level over time, with the gain change between them.", 30);
+    const P = P0;
+    const hx = P.px, hw = P.pw, hy = P.py + 2, hh = P.ph - 4;
+    legend(c, th, P0.x + 6, P0.y + P0.h - 4, [[th.scale, "In level", "The input level over time, drawn as a grey area."], [th.cyan, "Out level", "The output level over time, drawn as a cyan line."], [th.orange, "Gain change", "Output minus input, in dB, around the centre line (range +-6 dB)."]], { line: true });
     hint(hx, hy, hw, hh, "Level History", "Input level (grey area), output level (cyan line) and gain change (orange line) over time, newest on the right. Measured from the peak levels at the input and output.");
-    c.fillStyle = th.panel; c.fillRect(hx, hy, hw, hh);
     clipTo(c, hx, hy, hw, hh);
     const n = Math.min(st.uh.length, Math.floor(hw));
     c.fillStyle = th.dline;
@@ -211,7 +222,7 @@
     c.stroke();
     c.restore();
     // DC offset readout
-    const dy = P.py + P.ph - 2;
+    const dy = P.y + P.h - 20;
     hint(hx, dy - 9, 110, 12, "DC Offset", "A steady shift of the output away from zero, in thousandths of full scale. It should be close to 0. Measured from the output.");
     hint(hx + hw - 78, dy - 9, 78, 12, "Phase", "Normal means the output wave points the same way as the input. Inverted means it is flipped. Measured by comparing input and output.");
     hint(hx + 112, dy - 9, hw - 112 - 84, 12, "DC Offset Bar", "Shows the DC offset on a bar. The marker sits in the middle when there is no offset.");
@@ -226,6 +237,10 @@
     c.fillStyle = th.orange; c.fillRect(dcx + dcw / 2 + Math.max(-1, Math.min(1, st.dc * 20)) * dcw / 2 - 1, dy - 8, 3, 8);
   }
 
+  // Before the first measurement arrives (real audio still loading) the state is empty: start it with silence.
+  const SILENT = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 0 };
+  const wrap = f => (c, th, st, ps, vals) => { if (!st.uz && !st.lv) live(st, SILENT, 0); return f(c, th, st, ps, vals); };
+
   DESIGNS["Utility"] = {
     effect: "EveryTrim",
     refs: [["UtilityL12.png", "Utility"], ["ChannelEQL12.png", "Channel EQ (meters)"], ["LimiterL12.png", "Limiter (meters)"]],
@@ -235,17 +250,17 @@
         why: "Round stereo scope with a phase-correlation bar and balance bar, in the spirit of Utility's width and phase display.",
         bullets: ["Vectorscope of left/right samples: grey = in, cyan = out", "Correlation and balance bars, four peak meters", "Driven by the L/R audio at input and output",
           "Live: scope = inScopeL/R (grey) and scopeL/R (cyan), 64 samples; Corr out = m.corr; Corr in from ms mid/side power (not directly measured); balance from the four peaks; polarity from in/out scope product"],
-        draw: drawA },
+        draw: wrap(drawA) },
       { id: "B", name: "Mid / Side", short: "Mid/Side", width: 668, step, live,
         why: "Mid and side level meters plus a scrolling trace, like the mid/side view of Channel EQ.",
         bullets: ["Mid and side meters, input vs output", "Scrolling history of mid (cyan) and side (orange)", "Width and gain change are computed from the audio in and out",
           "Live: meters and trace = m.ms (in mid, in side, out mid, out side); Width % = out side / out mid (S/M ratio, 0 in silence); Gain = m.gainDb"],
-        draw: drawB },
+        draw: wrap(drawB) },
       { id: "C", name: "In / Out compare", short: "Compare", width: 648, step, live,
         why: "Input and output level history with a trace of the gain change between them, plus DC offset and phase, like Limiter.",
         bullets: ["Input level (grey) and output level (cyan) history", "Level history and gain-change trace (out minus in)", "Readouts: DC offset and phase (normal / inverted)",
           "Live: in/out = held peaks of the two channels, gain = m.gainDb, DC = m.dcOut, phase = sign of in/out scope product"],
-        draw: drawC },
+        draw: wrap(drawC) },
     ],
   };
 })();

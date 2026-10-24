@@ -87,7 +87,10 @@
 
   // A, real: input and output scope on top, error (out - in) in 16-bit steps below
   function drawAReal(c, th, st, P) {
-    const wh = Math.round(P.ph * 0.6), mid = P.py + wh / 2, sc = (wh / 2 - 3) / st.wsc, n = st.s.length;
+    const wh = Math.round(P.ph * 0.6), mid = P.py + wh / 2, n = st.s.length;
+    // one zoom for input and output (RUBRIC 2.6): the loudest visible point fills ~90 % of the scope
+    let pkS = 0; for (let i = 0; i < n; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
+    const g = fit(st, "waveA", pkS), sc = (wh / 2 - 3) * g;
     const ey = P.py + wh + 6, eh = P.ph - wh - 6, emid = ey + eh / 2, esc = (eh / 2 - 1) / 3;
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1; c.strokeStyle = th.scale; c.beginPath(); c.moveTo(P.px, mid); c.lineTo(P.px + P.pw, mid); c.stroke();
@@ -109,15 +112,16 @@
       c.stroke();
     }
     c.restore();
-    legend(c, th, P.x + 6, P.y + P.h - 3, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output. In the error strip it shows out minus in."]], { line: true });
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output. In the error strip it shows out minus in."]], { line: true });
+    zoomNote(c, th, P, g);
     hint(P.px, P.py, P.pw, wh, "Input And Output Waveform", "A short piece of the sound, zoomed in. Cyan is the input, orange is the output. Measured from the audio going in and out.");
     hint(P.px, ey, P.pw, eh, "Error Trace", "Output minus input, in steps of the 16-bit grid. This is the rounding noise and dither the effect adds.");
     hint(P.px + 2, P.py + 1, 120, 10, "Full Height Label", "The level that reaches the top of the scope, in dBFS. It follows the signal.");
-    txt(c, P.px + 2, P.py + 9, `full height = ${dbl(st.wsc).toFixed(0)} dBFS`, { color: th.scale, size: 8.5, align: "left" });
+    txt(c, P.px + 2, P.py + 9, `full height = ${dbl(1 / g).toFixed(0)} dBFS`, { color: th.scale, size: 8.5, align: "left" });
     txt(c, P.px + 2, ey + 8, "Error (out - in), 16-bit steps", { color: th.dispText, size: 8.5, align: "left" });
     sameNote(c, th, st, P.px + P.pw - 4, ey + 8);
-    txt(c, P.x + P.w - 6, P.y + P.h - 3, "grid = 2 steps", { color: th.scale, size: 8.5, align: "right" });
-    hint(P.x + P.w - 70, P.y + P.h - 12, 66, 10, "Grid Size", "Each error grid line is 2 steps of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
+    txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 2 steps", { color: th.scale, size: 8.5, align: "right" });
+    hint(P.x + P.w - 70, P.y + P.h - 13, 66, 10, "Grid Size", "Each error grid line is 2 steps of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
   }
   // B, real: output spectrum (cyan) with the added part (output - input) in orange
   function drawBReal(c, th, st, P) {
@@ -148,7 +152,7 @@
     sameNote(c, th, st, P.px + 3, P.py + 9, "left");
   }
   function cHints(c, th, P, hw, hh, base) {
-    legend(c, th, P.px, P.py - 4, [[th.cyan, "Error count", "Bars: how often each size of error happens. Error is output minus input."], [th.orange, "Noise trace", "The line at the bottom: the noise level over time."]]);
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "Error count", "Bars: how often each size of error happens. Error is output minus input."], [th.orange, "Noise trace", "The line at the bottom: the noise level over time."]]);
     hint(P.px, P.py, hw, hh + 12, "Error Histogram", "How often each size of error happens, in 16-bit steps. A wide, smooth bump means a smooth dither. Measured as output minus input.");
     hint(P.px + hw + 8, P.py, 24, hh, "Noise Meters", "Left and right level of the added noise, in dBFS. Measured as output minus input.");
     hint(P.px + hw + 34, P.py, 28, hh, "Noise Scale", "Scale for the noise meters, in dBFS.");
@@ -192,18 +196,21 @@
   }
 
   function dials(c, th, ps, vals, W) {
-    const n = ps.length;
-    if (!n) { rr(c, W - 92, HEAD_H + 4, 88, DEVICE_H - 8, 3, th.panel); txt(c, W - 48, HEAD_H + 88, "No controls", { color: th.dim });
+    const n = ps.length, y = HEAD_H + 4, h = DEVICE_H - 8;
+    if (!n) { tile(c, th, W - 98, y, 96, h); txt(c, W - 50, HEAD_H + 88, "No controls", { color: th.dim });
       return 96; }
     const rows = n <= 5 ? 1 : n <= 10 ? 2 : 3, cols = Math.ceil(n / rows), w = cols * 52;
-    knobGrid(c, th, ps, { x: W - w - 4, y: HEAD_H + 4, w, h: DEVICE_H - 8 }, cols, vals);
-    return w + 8;
+    const tw = w + 8;
+    tile(c, th, W - 2 - tw, y, tw, h);
+    knobGrid(c, th, ps, { x: W - 2 - tw + 4, y, w, h }, cols, vals);
+    return tw;
   }
-  function panel(c, th, w, readouts, dTitle, dText) {
+  function panel(c, th, w, readouts, dTitle, dText, bot = 0) {
     const x = 4, y = HEAD_H + 4, h = DEVICE_H - 8;
-    rr(c, x, y, w, h, 3, th.display);
+    screen(c, th, x, y, w, h);
     menu(c, th, x + 4, y + 3, 104, "BuildATPDF"); arrows(c, th, x + 112, y + 3);
-    c.fillStyle = th.dline; c.fillRect(x, y + 21, w, 1);
+    strip(c, th, x, y, w, 22);
+    if (bot) strip(c, th, x, y + h - bot, w, bot, true);
     let rx = x + w - 6;
     hint(x, y, w, h, dTitle || "Display", dText || "Shows what the effect does to the sound, measured from the input and the output.");
     readouts.slice().reverse().forEach(r => {
@@ -212,8 +219,14 @@
       txt(c, rx, y + 14, r[0], { color: th.dispText, align: "right" }); rx -= r[0].length * 5 + 10;
       hint(rx + 6, y + 3, r0 - rx, 15, r[3] || r[0], r[4] || "");
     });
-    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32, lx: x + 146, ly: y + 14 };
+    return { x, y, w, h, px: x + 6, py: y + 26, pw: w - 12, ph: h - 32 - bot, lx: x + 146, ly: y + 14 };
   }
+  // zoom readout in the bottom strip (RUBRIC 2.6)
+  const zoomNote = (c, th, P, g) => {
+    if (g <= 1.05) return;
+    txt(c, P.x + 86, P.y + P.h - 4, zoomText(g), { color: th.dispText, size: 8.5, align: "left" });
+    hint(P.x + 84, P.y + P.h - 13, 62, 11, "Zoom", "The waveform is enlarged so the loudest part fills the scope. The number says by how much; quiet signals get a larger zoom.");
+  };
   const clipTo = (c, x, y, w, h) => { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); };
   const fm = v => (v >= 0 ? "+" : "") + v.toFixed(1);
 
@@ -223,13 +236,15 @@
     gs(c, th, W, st);
     const P = panel(c, th, W - dw - 8, st.real ? [["Noise", ndTxt(st), th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${(st.lvl === undefined ? -120 : st.lvl).toFixed(1)} dBFS`, th.cyan, "Signal Level", "The average (RMS) level of the output, in dBFS."]]
       : [["Noise", `${st.nd.toFixed(1)} dBFS`, th.orange, "Noise Level", "How loud the added noise is, in dBFS. Measured as output minus input."], ["Level", `${st.amp.toFixed(1)} LSB`, th.cyan, "Signal Level", "The size of the test tone, in 16-bit steps (LSB)."]],
-      "Zoomed Waveform", "Shows the input and the output zoomed in to single 16-bit steps, so you can see what dither adds.");
+      "Zoomed Waveform", "Shows the input and the output zoomed in to single 16-bit steps, so you can see what dither adds.", 15);
     if (!st.s) return;
     if (st.real) return drawAReal(c, th, st, P);
-    const mid = P.py + P.ph / 2, sc = P.ph / 14;
+    const mid = P.py + P.ph / 2;
+    let pkS = 0; for (let i = 0; i < N; i++) pkS = Math.max(pkS, Math.abs(st.s[i]), Math.abs(st.y[i]));
+    const g = fit(st, "waveA", pkS / 7), sc = P.ph / 14 * g;     // grid lines stay 1 LSB apart; the zoom moves them
     clipTo(c, P.px, P.py, P.pw, P.ph);
     c.lineWidth = 1;
-    for (let l = -6; l <= 6; l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
+    for (let l = -Math.ceil(7 / g); l <= Math.ceil(7 / g); l++) { c.strokeStyle = l === 0 ? th.scale : th.dline; c.beginPath(); c.moveTo(P.px, mid - l * sc); c.lineTo(P.px + P.pw, mid - l * sc); c.stroke(); }
     c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
     for (let i = 0; i < N; i++) { const x = P.px + i / (N - 1) * P.pw, y = mid - st.s[i] * sc; i ? c.lineTo(x, y) : c.moveTo(x, y); }
     c.stroke();
@@ -238,10 +253,11 @@
       i ? c.lineTo(x0, y) : c.moveTo(x0, y); c.lineTo(x1, y); }
     c.stroke(); c.restore();
     [-4, 0, 4].forEach(l => txt(c, P.px + 1, mid - l * sc - 2, l ? fm(l) : "0", { color: th.scale, size: 8.5, align: "left" }));
-    legend(c, th, P.x + 6, P.y + P.h - 3, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output."]], { line: true });
+    legend(c, th, P.x + 6, P.y + P.h - 4, [[th.cyan, "In", "The sound going into the effect, measured at its input."], [th.orange, "Out", "The sound coming out of the effect, measured at its output."]], { line: true });
+    zoomNote(c, th, P, g);
     hint(P.px, P.py, P.pw, P.ph, "Input And Output Waveform", "A short piece of the sound, zoomed in to single 16-bit steps. Cyan is the input, orange is the output. Measured from the audio going in and out.");
-    txt(c, P.x + P.w - 6, P.y + P.h - 3, "grid = 1 LSB", { color: th.scale, size: 8.5, align: "right" });
-    hint(P.x + P.w - 70, P.y + P.h - 12, 66, 10, "Grid Size", "Each grid line is 1 step (LSB) of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
+    txt(c, P.x + P.w - 6, P.y + P.h - 4, "grid = 1 LSB", { color: th.scale, size: 8.5, align: "right" });
+    hint(P.x + P.w - 70, P.y + P.h - 13, 66, 10, "Grid Size", "Each grid line is 1 step (LSB) of the 16-bit sample. A step is the smallest level a 16-bit file can store.");
   }
 
   // ---------- B: spectrum of the output
@@ -279,8 +295,8 @@
     const W = 560, dw = dials(c, th, ps, vals, W);
     gs(c, th, W, st);
     const P0 = panel(c, th, W - dw - 8, [["SNR", st.real ? (st.snrTxt || "-") : `${st.snr.toFixed(0)} dB`, th.cyan, "Signal To Noise Ratio", "How far the signal is above the added noise, in dB. Measured as output level minus noise level."], ["Peak", `${(st.peak || 0).toFixed(1)} LSB`, th.orange, "Error Peak", "The biggest single error between output and input, in 16-bit steps (LSB)."]],
-      "Error Meter", "Shows the error the effect adds (output minus input) as a histogram, noise meters and a trace over time.");
-    const P = Object.assign({}, P0, { py: P0.py + 12, ph: P0.ph - 12 });
+      "Error Meter", "Shows the error the effect adds (output minus input) as a histogram, noise meters and a trace over time.", 15);
+    const P = P0;
     if (!st.hist) return;
     if (st.real) return drawCReal(c, th, st, P);
     const hh = P.ph - 44, hw = P.pw - 62, base = P.py + hh;
@@ -310,6 +326,10 @@
     txt(c, P.px + 2, sy + 8, "Noise floor over time", { color: th.dispText, size: 8.5, align: "left" });
   }
 
+  // Before the first measurement arrives (real audio still loading) the state is empty: start it with silence.
+  const SILENT = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 0 };
+  const wrap = f => (c, th, st, ps, vals) => { if (!st.dz && !st.lz) live(st, SILENT, 0); return f(c, th, st, ps, vals); };
+
   DESIGNS["Dithers"] = {
     effect: "BuildATPDF",
     refs: [["SaturatorL12.png", "Saturator (waveform + curve display)"], ["EQEightL12.png", "EQ Eight (spectrum)"], ["UtilityL12.png", "Utility (meters)"]],
@@ -319,17 +339,17 @@
         why: "A very quiet sine zoomed to bit level: the input line in cyan, the stepped output in orange, like the waveform view of Saturator.",
         bullets: ["Input and output waveform, grid = 1 LSB step", "Readouts: noise floor (dBFS) and signal level", "Driven by the audio in and the audio out of the device",
           "Live: input and output scope (m.inScope/scope), error strip = out - in in 16-bit steps, Noise = diffRmsDb, Level = outRmsDb (dBFS)"],
-        draw: drawA },
+        draw: wrap(drawA) },
       { id: "B", name: "Noise spectrum", short: "Spectrum", width: 688, step, live,
         why: "FFT spectrum of the output with a dashed line at the measured noise floor, in the style of EQ Eight's analyser.",
         bullets: ["FFT of the output, 0–20 kHz, -140 to -60 dB", "Dashed line = average noise floor", "Shows where the noise sits, so noise shaping is visible",
           "Live: cyan = specOut, orange = specDiff (added part), dashed = diffRmsDb; axis -120..0 dB, log frequency (48 bands, not a 128-bin FFT)"],
-        draw: drawB },
+        draw: wrap(drawB) },
       { id: "C", name: "Error meter", short: "Error", width: 628, step, live,
         why: "Histogram of the error (output minus input) beside two noise meters and a scrolling noise-floor trace.",
         bullets: ["Histogram of the difference between output and input", "Left/right noise meters and SNR readout", "Driven by the in-vs-out difference of each sample",
           "Live: histogram and L/R noise meters from scope out - in (64 samples per frame), SNR = outRmsDb - diffRmsDb, history = diffRmsDb"],
-        draw: drawC },
+        draw: wrap(drawC) },
     ],
   };
 })();

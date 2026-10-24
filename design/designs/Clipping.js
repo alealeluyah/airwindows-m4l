@@ -31,22 +31,33 @@
     st.clipP = Math.max(100 * clipped / N, (st.clipP || 0) - 100 * Math.max(0, dtm));   // clip lamp holds ~1 s
     return { d, f, ceil, st, inL, outL, diff: outL - inL, gr: st.gr || 0, clipPct: st.clipP, curve: simCurve(f) };
   }
-  const box = (c, th, x, y, w, h, title, right) => {
-    rr(c, x, y, w, h, 3, th.display);
-    if (title) txt(c, x + 6, y + 11, title, { color: th.scale, align: "left" });
-    if (right) txt(c, x + w - 6, y + 11, right, { color: th.orange, align: "right" });
+  // A panel is a SCREEN with a strip on top (title, legend, readout, zoom). RUBRIC 2.1 / 2.3.
+  const SH = 19;
+  const box = (c, th, x, y, w, h, title, right, zt) => {
+    screen(c, th, x, y, w, h);
+    strip(c, th, x, y, w, SH);
+    c.font = `400 9.5px ${FONT}`;
+    let rx = x + w - 6;
+    if (right) { txt(c, rx, y + 13, right, { color: th.orange, align: "right" }); rx -= Math.ceil(c.measureText(right).width) + 10; }
+    if (zt) {   // auto zoom (RUBRIC 2.6)
+      const zw = Math.ceil(c.measureText(zt).width);
+      txt(c, rx, y + 13, zt, { color: th.dispText, align: "right" });
+      hint(rx - zw - 2, y + 3, zw + 4, 13, "Zoom", "The waveform is enlarged so the loudest part fills the screen. The number says by how much; quiet signals get a larger zoom. It follows the signal level automatically.");
+    }
   };
   // legend in a display header row: starts after the title, stops before the right-hand text, drops items that do not fit
   const SCG = () => (S.theme === "light" ? "#9a9a9a" : "#6a6a6a");
   function hdrLegend(c, th, x, y, w, title, right, items, o = {}) {
     c.font = `400 9.5px ${FONT}`;
-    const x0 = x + 6 + (title ? Math.ceil(c.measureText(title).width) + 10 : 0);
+    const tw = title ? Math.ceil(c.measureText(title).width) + 10 : 0;
     const maxEnd = x + w - 6 - (right ? Math.ceil(c.measureText(right).width) + 8 : 0);
     c.font = `400 8.5px ${FONT}`;
-    const sw = o.line ? 11 : 9;
-    let end = x0, n = 0;
-    for (const it of items) { const e = end + sw + Math.ceil(c.measureText(it[1]).width) + (n ? 8 : 0); if (e > maxEnd) break; end = e; n++; }
-    if (n) legend(c, th, x0, y + 11, items.slice(0, n), o);
+    const sw = o.line ? 11 : 9, gap = o.gap || 8;
+    const count = x0 => { let end = x0, n = 0; for (const it of items) { const e = end + sw + Math.ceil(c.measureText(it[1]).width) + (n ? gap : 0); if (e > maxEnd) break; end = e; n++; } return n; };
+    const nT = count(x + 6 + tw), n0 = count(x + 6);
+    const showT = !!title && nT >= n0, x0 = x + 6 + (showT ? tw : 0), n = showT ? nT : n0;   // the title gives way to the legend
+    if (showT) txt(c, x + 6, y + 13, title, { color: th.scale, align: "left" });
+    if (n) legend(c, th, x0, y + 13, items.slice(0, n), o);
   }
   const sgn = v => (v >= 0 ? "+" : "") + v.toFixed(1);
   function dials(c, th, ps, area, cols, vals, cw) {
@@ -57,32 +68,36 @@
     const rh = Math.min(58, area.h / rows), y0 = area.y + (area.h - rows * rh) / 2;
     for (let r = 0; r < rows; r++) knobGrid(c, th, ps.slice(r * cols, (r + 1) * cols), { x: area.x, y: y0 + r * rh, w: area.w, h: rh }, cols, vals, cw);
   }
-  // In / Out / Diff as label + value pairs; each pair starts after the width of the one before it
+  // In / Out / Diff as label + value pairs, for a screen strip (grey label, coloured value)
   const readouts = (c, th, x, y, m) => {
     const items = [["In", m.inL.toFixed(1), th.cyan], ["Out", m.outL.toFixed(1), th.cyan], ["Diff", `${m.diff >= 0 ? "+" : ""}${m.diff.toFixed(1)} dB`, th.orange]];
     c.font = `400 9.5px ${FONT}`;
-    const vw = c.measureText("-60.0 dB").width, lws = items.map(it => c.measureText(it[0]).width);
-    const total = items.reduce((t, it, i) => t + lws[i] + 4 + vw + 8, 0);
-    rr(c, x - 5, y - 11, total + 2, 15, 2, th.display);   // dark chip so the numbers read in both themes
+    const lws = items.map(it => c.measureText(it[0]).width), vws = items.map(it => c.measureText(it[1]).width);
     let cx = x;
     items.forEach(([l, v, col], i) => {
       txt(c, cx, y, l, { color: th.dispText, align: "left" });
       txt(c, cx + lws[i] + 4, y, v, { color: col, align: "left" });
-      hint(cx - 2, y - 10, lws[i] + 4 + vw + 4, 14, ["Input Peak", "Output Peak", "Level Difference"][i], [
+      hint(cx - 2, y - 10, lws[i] + 4 + vws[i] + 4, 14, ["Input Peak", "Output Peak", "Level Difference"][i], [
         "Loudest input level in dB, held and falling slowly. Measured before the effect, after the Input gain.",
         "Loudest output level in dB, held and falling slowly. Measured after the effect, before the Output gain.",
         "Output peak minus input peak, in dB. Above zero means the effect made the peaks louder. Below zero means it made them quieter."][i]);
-      cx += lws[i] + 4 + vw + 8;
+      cx += lws[i] + 4 + vws[i] + 10;
     });
   };
+  // bottom strip of a screen (height fh) with the In / Out / Diff readouts
+  const footer = (c, th, x, y, w, h, fh, m) => {
+    const ty = y + h - fh;
+    strip(c, th, x, ty, w, fh, true);
+    readouts(c, th, x + 8, ty + fh / 2 + 3.5, m);
+  };
   // transfer curve measured as output sample vs input sample; orange dot = live input peak
-  function transferPanel(c, th, x, y, w, h, m, title, right) {
-    box(c, th, x, y, w, h, title, right);
+  function transferPanel(c, th, x, y, w, h, m, title, right, foot = 0) {
+    box(c, th, x, y, w, h, "", right);
     hdrLegend(c, th, x, y, w, title, right, [
       [th.cyan, "Output", "The curve shows the output level for every input level. The more it bends away from the diagonal, the more the effect changes the sound."],
       [th.orange, "Peak", "The orange dot marks the current input peak and its output level. In clipping effects the orange lines mark the ceiling."],
-      [th.scale, "No change", "The grey diagonal is a straight line: output equal to input. Where the curve leaves it, the effect changes the level."]], { line: true });
-    const s = Math.min(w - 12, h - 20), px = x + (w - s) / 2, py = y + 16 + (h - 20 - s) / 2;
+      [th.scale, "No change", "The grey diagonal is a straight line: output equal to input. Where the curve leaves it, the effect changes the level."]], { line: true, gap: 6 });
+    const avail = h - SH - 7 - foot, s = Math.min(w - 12, avail), px = x + (w - s) / 2, py = y + SH + 3 + (avail - s) / 2;
     const X = v => px + (clamp(v, -1.1, 1.1) + 1.1) / 2.2 * s, Y = v => py + s - (clamp(v, -1.1, 1.1) + 1.1) / 2.2 * s;
     const a = Math.min(1, m.st.aPk);
     c.fillStyle = th.cyan + "33"; c.fillRect(X(-a), py, X(a) - X(-a), s);
@@ -96,33 +111,34 @@
     c.fillStyle = th.orange; c.beginPath(); c.arc(X(a), Y(m.f(a)), 3, 0, TAU); c.fill();
     txt(c, px + 3, py + 9, "Out", { color: th.dispText, size: 8.5, align: "left" });
     txt(c, px + s - 3, py + s / 2 - 3, "In", { color: th.dispText, size: 8.5, align: "right" });
-    hint(x, y, w, h, "Transfer Curve", "Shows the output level (up) for each input level (right). A straight diagonal means no change. Measured from the input and output samples.");
+    hint(x, y, w, h - foot, "Transfer Curve", "Shows the output level (up) for each input level (right). A straight diagonal means no change. Measured from the input and output samples.");
     if (right) hint(x + w - 52, y + 2, 48, 12, "Level Change", "Output peak minus input peak, in dB. Above zero means louder, below zero means quieter.");
     hint(X(-a), py, Math.max(2, X(a) - X(-a)), s, "Input Range", "The blue band covers the input levels in use right now. It widens when the input gets louder.");
     if (m.ceil) { hint(px, Y(m.ceil) - 3, s, 6, "Ceiling Line", "The level where the effect stops the signal. Estimated from the top of the measured curve."); hint(px, Y(-m.ceil) - 3, s, 6, "Ceiling Line", "The level where the effect stops the signal. Estimated from the top of the measured curve."); }
     hint(X(a) - 5, Y(m.f(a)) - 5, 10, 10, "Input Peak Dot", "Marks the current input peak on the curve. Its height is the output level for that peak.");
   }
-  function scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp, zoom) {
-    hdrLegend(c, th, x, y, w, title, right, [
+  function scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp, zt) {
+    hdrLegend(c, th, x, y, w, title, [zt, right].filter(Boolean).join("   "), [
       [SCG(), "Input", "The grey line is the signal going into the effect."],
       [th.cyan, "Output", "The cyan line is the signal coming out of the effect."],
       [th.orange, "Change", "The orange fill is the difference between input and output. Orange dots mark samples cut at the ceiling."]], { line: true });
     hint(x, y, w, h, "Waveform Display", "Shows a few milliseconds of the audio as it moves in time, input against output. Measured from the input and output samples.");
     if (right) hint(x + w - 100, y + 2, 96, 12, "Ceiling Readout", "The level where the effect cuts the peaks, in dB. Shows none when the signal has not reached a ceiling.");
     if (m.ceil) for (const s of [-1, 1]) hint(px, mid - s * m.ceil * amp - 3, pw, 6, "Ceiling Line", "The level where the effect cuts the peaks. Estimated from the measured curve.");
-    if (zoom) hint(x + 4, y + h - 13, 52, 11, "Zoom", "How much the waveform is enlarged so quiet sound stays readable. It follows the signal level automatically.");
   }
   // zoomed oscilloscope: input (grey), output (cyan), difference filled orange
-  function scopePanel(c, th, x, y, w, h, m, title, right) {
-    if (m.live) return scopeLive(c, th, x, y, w, h, m, title, right);
-    box(c, th, x, y, w, h, title, right);
-    const px = x + 4, pw = w - 8, py = y + 16, ph = h - 20, mid = py + ph / 2, amp = ph / 2 / 1.1;
+  function scopePanel(c, th, x, y, w, h, m, title, right, foot = 0) {
+    if (m.live) return scopeLive(c, th, x, y, w, h, m, title, right, foot);
+    const px = x + 4, pw = w - 8, py = y + SH + 3, ph = h - SH - 7 - foot, mid = py + ph / 2;
     const ph0 = m.st.t * 0.35, n = Math.max(8, Math.floor(pw / 2));
+    const xi = [], yo = [];
+    for (let i = 0; i <= n; i++) { const v = sigAt(ph0 + i / n * 2, m.st.aV); xi.push(v); yo.push(m.f(v)); }
+    let pk = 0; for (let i = 0; i <= n; i++) pk = Math.max(pk, Math.abs(xi[i]), Math.abs(yo[i]));
+    const g = fit(m.st, "scope", pk), amp = ph / 2 * g, zt = zoomText(g);   // loudest point fills ~90 % (RUBRIC 2.6)
+    box(c, th, x, y, w, h, "", right, zt);
     c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
     c.fillStyle = th.dline; c.fillRect(px, mid, pw, 1);
     if (m.ceil) { c.fillRect(px, mid - m.ceil * amp, pw, 1); c.fillRect(px, mid + m.ceil * amp, pw, 1); }
-    const xi = [], yo = [];
-    for (let i = 0; i <= n; i++) { const v = sigAt(ph0 + i / n * 2, m.st.aV); xi.push(v); yo.push(m.f(v)); }
     c.fillStyle = th.orange + "55"; c.beginPath();
     for (let i = 0; i <= n; i++) { const X = px + i / n * pw; i ? c.lineTo(X, mid - yo[i] * amp) : c.moveTo(X, mid - yo[i] * amp); }
     for (let i = n; i >= 0; i--) c.lineTo(px + i / n * pw, mid - xi[i] * amp);
@@ -133,7 +149,7 @@
     yo.forEach((v, i) => { const X = px + i / n * pw; i ? c.lineTo(X, mid - v * amp) : c.moveTo(X, mid - v * amp); }); c.stroke();
     if (m.ceil) { c.fillStyle = th.orange; yo.forEach((v, i) => { if (Math.abs(v) >= m.ceil - 1e-6) c.fillRect(px + i / n * pw - 1, mid - v * amp - 1, 2, 2); }); }
     c.restore();
-    scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp, false);
+    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp, zt);
   }
   // FFT-style harmonic display: input spectrum (grey), output (cyan), content the effect ADDED (orange)
   function specExtras(c, th, x, y, w, h, m, title) {
@@ -147,10 +163,10 @@
     hint(x, y + 16, 22, h - 30, "Level Scale", "Level in dB. 0 dB is the top and is the loudest.");
     hint(x + 22, y + h - 11, w - 28, 11, "Frequency Scale", "Frequency in Hz. Low pitch is on the left, high pitch on the right.");
   }
-  function specPanel(c, th, x, y, w, h, m, title) {
-    if (m.live) return specLive(c, th, x, y, w, h, m, title);
-    box(c, th, x, y, w, h, title);
-    const px = x + 22, pw = w - 28, py = y + 16, ph = h - 30, K = 24, N = 64;
+  function specPanel(c, th, x, y, w, h, m, title, foot = 0) {
+    if (m.live) return specLive(c, th, x, y, w, h, m, title, foot);
+    box(c, th, x, y, w, h, "");
+    const px = x + 22, pw = w - 28, py = y + SH + 3, ph = h - SH - 16 - foot, K = 24, N = 64;
     const inS = [], outS = [];
     for (let i = 0; i < N; i++) { const v = sigAt(i / N, m.st.aV); inS.push(v); outS.push(m.f(v)); }
     const mag = (arr, k) => { let re = 0, im = 0; for (let i = 0; i < N; i++) { re += arr[i] * Math.cos(TAU * k * i / N); im -= arr[i] * Math.sin(TAU * k * i / N); } return Math.hypot(re, im) * 2 / N; };
@@ -164,15 +180,15 @@
       if (di > -70) { c.fillStyle = GREY(); c.fillRect(x0, yy(di), bw, py + ph - yy(di)); }
       c.fillStyle = di < -60 && dout > -70 ? th.orange : th.cyan; c.fillRect(x0 + (bw > 3 ? 1 : 0), yy(dout), Math.max(1.5, bw - 2), py + ph - yy(dout));
     }
-    [[1, "110"], [3, "330"], [9, "1k"], [24, "2.6k"]].forEach(([k, s]) => txt(c, px + lx(k) * pw, y + h - 3, s, { color: th.scale, size: 8, align: k === 24 ? "right" : "center" }));
+    [[1, "110"], [3, "330"], [9, "1k"], [24, "2.6k"]].forEach(([k, s]) => txt(c, px + lx(k) * pw, y + h - 3 - foot, s, { color: th.scale, size: 8, align: k === 24 ? "right" : "center" }));
     m.added = 100 * Math.sqrt(added / Math.max(fund, 1e-6));
-    txt(c, x + w - 6, y + 11, `Added ${m.added.toFixed(1)} %`, { color: th.orange, align: "right" });
-    specExtras(c, th, x, y, w, h, m, title);
+    txt(c, x + w - 6, y + 13, `Added ${m.added.toFixed(1)} %`, { color: th.orange, align: "right" });
+    specExtras(c, th, x, y, w, h - foot, m, title);
   }
   // scrolling level history: input (grey), output (cyan line), difference between them (orange)
-  function histPanel(c, th, x, y, w, h, m, title, right) {
-    box(c, th, x, y, w, h, title, right);
-    const px = x + 4, pw = w - 8, py = y + 16, ph = h - 20, hs = m.st.hist, n = Math.min(hs.length, pw);
+  function histPanel(c, th, x, y, w, h, m, title, right, foot = 0) {
+    box(c, th, x, y, w, h, "", right);
+    const px = x + 4, pw = w - 8, py = y + SH + 3, ph = h - SH - 7 - foot, hs = m.st.hist, n = Math.min(hs.length, pw);
     const Y = d => py + ph * clamp(-d / 40, 0, 1), top = (e, o) => Y(db((o ? (m.live ? e.o : Math.abs(m.f(e.a))) : e.a) + 0.005));
     c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
     [-10, -20, -30].forEach(g => { c.fillStyle = th.dline; c.fillRect(px, Y(g), pw, 1); });
@@ -189,7 +205,7 @@
       [GREY(), "Input", "The grey area is the input level over the last moments."],
       [th.cyan, "Output", "The cyan line is the output level over the same time."],
       [th.orange, "Change", "The orange fill is the gap between input and output: the level the effect added or took away."]]);
-    hint(x, y, w, h, "Level History", "Shows the level of the sound over the last moments, in dB. New sound enters on the right. Measured from the input and output peaks.");
+    hint(x, y, w, h - foot, "Level History", "Shows the level of the sound over the last moments, in dB. New sound enters on the right. Measured from the input and output peaks.");
     hint(px, py + ph - 12, 40, 10, "Floor Label", "The bottom of the display is -40 dB. Faint lines mark -10, -20 and -30 dB.");
   }
   // horizontal gain-change bar: centre = 0 dB, orange right = louder out, left = quieter out
@@ -287,10 +303,12 @@
   const simCurve = f => { const o = []; for (let i = 0; i <= 48; i++) { const v = -1.1 + i / 48 * 2.2; o.push([v, f(v)]); } return o; };
   const hzFrac = hz => Math.log(hz / 20) / Math.log(1000);
   // live scope: measured input (grey) and output (cyan) samples, orange = difference, zoomed automatically
-  function scopeLive(c, th, x, y, w, h, m, title, right) {
-    box(c, th, x, y, w, h, title, right);
+  function scopeLive(c, th, x, y, w, h, m, title, right, foot = 0) {
     const st = m.st, xi = st.scIn || [], yo = st.scOut || [], n = Math.min(xi.length, yo.length) - 1;
-    const px = x + 4, pw = w - 8, py = y + 16, ph = h - 20, mid = py + ph / 2, g = fin(st.sg, 1), amp = ph / 2 / 1.1 * g;
+    const px = x + 4, pw = w - 8, py = y + SH + 3, ph = h - SH - 7 - foot, mid = py + ph / 2;
+    let pk = 0; for (let i = 0; i <= n; i++) pk = Math.max(pk, Math.abs(xi[i]), Math.abs(yo[i]));
+    const g = fit(st, "scope", pk), amp = ph / 2 * g, zt = zoomText(g);   // one zoom for input and output (RUBRIC 2.6)
+    box(c, th, x, y, w, h, "", right, zt);
     c.save(); c.beginPath(); c.rect(px, py, pw, ph); c.clip();
     c.fillStyle = th.dline; c.fillRect(px, mid, pw, 1);
     if (m.ceil) { c.fillRect(px, mid - m.ceil * amp, pw, 1); c.fillRect(px, mid + m.ceil * amp, pw, 1); }
@@ -307,13 +325,12 @@
       if (m.ceil) { c.fillStyle = th.orange; yo.forEach((v, i) => { if (Math.abs(v) >= m.ceil * 0.97 && Math.abs(xi[i]) > Math.abs(v) * 1.05) c.fillRect(X(i) - 1, Y(v) - 1, 2, 2); }); }
     }
     c.restore();
-    txt(c, x + 6, y + h - 4, `zoom x${g.toFixed(1)}`, { color: th.scale, size: 8, align: "left" });
-    scopeExtras(c, th, x, y, w, h, m, title, right, px, pw, py, ph, mid, amp, true);
+    scopeExtras(c, th, x, y, w, h - foot, m, title, right, px, pw, py, ph, mid, amp, zt);
   }
   // live spectrum: 48 bands, grey = input, cyan = output, orange = output above input (added by the effect)
-  function specLive(c, th, x, y, w, h, m, title) {
-    box(c, th, x, y, w, h, title);
-    const st = m.st, px = x + 22, pw = w - 28, py = y + 16, ph = h - 30, N = 48;
+  function specLive(c, th, x, y, w, h, m, title, foot = 0) {
+    box(c, th, x, y, w, h, "");
+    const st = m.st, px = x + 22, pw = w - 28, py = y + SH + 3, ph = h - SH - 16 - foot, N = 48;
     const yy = d => py + ph * clamp(-d / 96, 0, 1);
     [0, -24, -48, -72, -96].forEach(gd => { c.fillStyle = th.dline; c.fillRect(px, yy(gd), pw, 1); txt(c, x + 18, yy(gd) + 3, String(gd), { color: th.scale, size: 8, align: "right" }); });
     if (st.bIn && st.bOut) {
@@ -327,12 +344,13 @@
         }
       }
     }
-    [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([hz, s]) => txt(c, px + hzFrac(hz) * pw, y + h - 3, s, { color: th.scale, size: 8, align: "center" }));
+    [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([hz, s]) => txt(c, px + hzFrac(hz) * pw, y + h - 3 - foot, s, { color: th.scale, size: 8, align: "center" }));
     m.added = fin(st.addPct, 0);
-    txt(c, x + w - 6, y + 11, `Added ${m.added.toFixed(1)} %`, { color: th.orange, align: "right" });
-    specExtras(c, th, x, y, w, h, m, title);
+    txt(c, x + w - 6, y + 13, `Added ${m.added.toFixed(1)} %`, { color: th.orange, align: "right" });
+    specExtras(c, th, x, y, w, h - foot, m, title);
   }
   const NAME = "ADClip9", Y0 = HEAD_H;
+  const T0 = Y0 + 4, TH = DEVICE_H - 8;   // tiles start 4 px from the top and bottom (RUBRIC 1.4)
   const lamp = (c, th, x, y, w, m) => {
     toggle(c, th, x, y, w, `Clip ${m.clipPct.toFixed(0)}%`, m.clipPct > 0);
     hint(x, y, w + 1, 15, "Clip Lamp", "Lights when the effect is cutting peaks. The number is the share of recent samples that were cut. It holds for about one second.");
@@ -346,6 +364,7 @@
     hint(x + w - 34, y + 18, 24, h - 34, "Peak Reduction Meter", "How far the effect turns the peaks down, in dB, from the top. Measured as input peak minus output peak.");
     hint(x + 10, y + h - 17, 36, 12, "Input Readout", "Input peak level in dB.");
     hint(x + w - 46, y + h - 17, 36, 12, "Reduction Readout", "Peak reduction in dB. Zero means the effect did not cut the peaks.");
+    strip(c, th, x, y + h - 15, w, 15, true);
   };
   const clipBar = (c, th, x, y, w, m) => {
     txt(c, x, y + 9, "Clipped", { color: th.text, align: "left" });
@@ -363,35 +382,47 @@
         why: "Tall level meters in the middle: input on the left, peak reduction on the right, dials at both sides — like Limiter.",
         bullets: ["Input meter = held input peak; orange bars = max(0, input peak - output peak), the real peak reduction","Clip lamp = share of the 128 scope samples where the output is lower than the input (and at the ceiling when one is known), held 1 s","Ceiling is taken from the measured curve (m.xfer) only when its top is clearly flat"],
         draw(c, th, st, ps, vals) {
-          const m = model(st, vals);
-          M(c, th, 6, Y0 + 4, 120, NAME); lamp(c, th, 6, Y0 + 22, 80, m);
-          const half = Math.ceil(ps.length / 2);
-          dials(c, th, ps.slice(0, half), { x: 4, y: Y0 + 40, w: 150, h: DEVICE_H - 44 }, 2, vals, 60);
-          limMeters(c, th, 160, Y0 + 6, 150, DEVICE_H - 12, m);
-          if (ps.length > half) dials(c, th, ps.slice(half), { x: 316, y: Y0 + 6, w: 160, h: DEVICE_H - 12 }, 2, vals, 60);
+          const m = model(st, vals), half = Math.ceil(ps.length / 2), hasR = ps.length > half, dw = 128;
+          tile(c, th, 4, T0, dw, TH);   // selector + left dials
+          M(c, th, 8, T0 + 4, 86, NAME); lamp(c, th, 8, T0 + 23, 80, m);
+          divider(c, th, 8, T0 + 41, 0, true, dw - 8);
+          dials(c, th, ps.slice(0, half), { x: 6, y: T0 + 44, w: dw - 4, h: TH - 46 }, 2, vals, 60);
+          const mx = 4 + dw + 2, mr = hasR ? GX(548) - 2 - dw - 2 : GX(548) - 2;
+          limMeters(c, th, mx, T0, mr - mx, TH, m);
+          if (hasR) {
+            tile(c, th, GX(548) - 2 - dw, T0, dw, TH);   // right dials
+            dials(c, th, ps.slice(half), { x: GX(548) - 2 - dw + 2, y: T0 + 2, w: dw - 4, h: TH - 4 }, 2, vals, 60);
+          }
           gainStrip(c, th, GX(548), st);
         } },
       { id: "B", name: "Scope", short: "Scope", width: 608, step, live,
         why: "A wide waveform display with the ceiling drawn as lines and clipped peaks marked, dials in a row under it.",
         bullets: ["Waveform = measured input / output samples, orange = removed part, dots = samples where output is cut below input at the ceiling","Ceiling line = top of the measured transfer curve (m.xfer), shown only when the curve is clearly flattened ('Ceiling: none' otherwise); clip lamp % as in A","Not derivable: a true ceiling when the signal never reaches it — then none is shown"],
         draw(c, th, st, ps, vals) {
-          const m = model(st, vals);
-          M(c, th, 6, Y0 + 4, 110, NAME); readouts(c, th, 170, Y0 + 15, m); lamp(c, th, 446, Y0 + 4, 88, m);
-          scopePanel(c, th, 6, Y0 + 22, 528, 80, m, "Waveform", (m.ceil ? `Ceiling ${db(m.ceil).toFixed(1)} dB` : "Ceiling: none"));
-          dials(c, th, ps, { x: 4, y: Y0 + 104, w: 532, h: 62 }, ps.length || 1, vals, 64);
+          const m = model(st, vals), cw = GX(608) - 6, sh = 101, ty = T0 + sh + 2;
+          scopePanel(c, th, 4, T0, cw, sh, m, "Waveform", (m.ceil ? `Ceiling ${db(m.ceil).toFixed(1)} dB` : "Ceiling: none"), 21);
+          footer(c, th, 4, T0, cw, sh, 21, m);
+          lamp(c, th, 4 + cw - 4 - 88, T0 + sh - 18, 88, m);
+          tile(c, th, 4, ty, cw, TH - sh - 2);   // selector + dials
+          M(c, th, 8, ty + 4, 104, NAME);
+          wrapText(c, 8, ty + 31, 138, S.effWhat, { color: th.dim, maxLines: 3, size: 9, lh: 11 });
+          divider(c, th, 150, ty + 6, 46);
+          dials(c, th, ps, { x: 154, y: ty + 2, w: cw - 154, h: 54 }, ps.length || 1, vals, Math.min(64, (cw - 154) / Math.max(1, ps.length)));
           gainStrip(c, th, GX(608), st);
         } },
       { id: "C", name: "Curve", short: "Curve", width: 568, step, live,
         why: "The hard-knee curve and a level history side by side, with a clipped-share bar — like Compressor's curve view.",
         bullets: ["Curve = held mean output per input bin (m.xfer); flat top = clipping; orange lines = ceiling when found","Level history = m.inPk (grey) / m.outPk (cyan), orange = removed level","Bars: gain change (held peak out - in) and share of samples cut"],
         draw(c, th, st, ps, vals) {
-          const m = model(st, vals);
-          M(c, th, 6, Y0 + 4, 120, NAME);
-          transferPanel(c, th, 6, Y0 + 22, 150, 104, m, "Curve");
-          histPanel(c, th, 162, Y0 + 22, 170, 104, m, "Level");
-          diffBar(c, th, 8, Y0 + 130, 148, m, "Gain Δ"); clipBar(c, th, 8, Y0 + 146, 148, m);
-          readouts(c, th, 164, Y0 + 142, m);
-          dials(c, th, ps, { x: 340, y: Y0 + 4, w: 156, h: DEVICE_H - 8 }, 3, vals, 52);
+          const m = model(st, vals), tw = 164, tx = GX(568) - 2 - tw, lw = tx - 6, bh = 38, sh = TH - bh - 2;
+          transferPanel(c, th, 4, T0, 150, sh, m, "Curve");
+          histPanel(c, th, 156, T0, lw - 152, sh, m, "Level", undefined, 15);
+          footer(c, th, 156, T0, lw - 152, sh, 15, m);
+          tile(c, th, 4, T0 + sh + 2, lw, bh);   // gain change and clipped share
+          diffBar(c, th, 8, T0 + sh + 8, lw - 8, m, "Gain Δ"); clipBar(c, th, 8, T0 + sh + 22, lw - 8, m);
+          tile(c, th, tx, T0, tw, TH);   // selector + dials
+          M(c, th, tx + 4, T0 + 4, 100, NAME);
+          dials(c, th, ps, { x: tx + 2, y: T0 + 23, w: tw - 4, h: TH - 25 }, 3, vals, 52);
           gainStrip(c, th, GX(568), st);
         } },
     ],

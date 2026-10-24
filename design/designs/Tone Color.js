@@ -31,9 +31,16 @@
   }
   function clipTo(c, x, y, w, h) { c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); }
   function dispHead(c, th, dx, dy, name) { menu(c, th, dx + 6, dy + 4, 100, name); arrows(c, th, dx + 110, dy + 4); }
+  // zoom tag in a screen strip (RUBRIC 2.6): text only when zoomed, hint always
+  function zoomTag(c, th, x, y, g) {
+    txt(c, x, y, zoomText(g), { color: th.dispText, align: "left", size: 8.5 });
+    hint(x - 2, y - 10, 70, 13, "Zoom", "The wave is enlarged so its loudest point fills the plot. The number says by how much; a quiet signal gets a larger zoom.");
+  }
+  // loudest absolute value over the newest n samples of several arrays
+  function absPeak(arrs, n) { let p = 0; for (const a of arrs) for (let i = Math.max(0, a.length - n); i < a.length; i++) p = Math.max(p, Math.abs(a[i])); return p; }
   function ctl(c, th, ps, area, cols, vals, cw) {
-    if (!ps.length) { rr(c, area.x + 4, area.y + 4, area.w - 8, area.h - 8, 3, th.panel);
-      txt(c, area.x + area.w / 2, area.y + area.h / 2 + 3, "No controls", { color: th.dim }); return; }
+    tile(c, th, area.x, area.y, area.w, area.h);
+    if (!ps.length) { txt(c, area.x + area.w / 2, area.y + area.h / 2 + 3, "No controls", { color: th.dim }); return; }
     knobGrid(c, th, ps, area, cols, vals, cw);
   }
   // ---- Tone Color simulation: a sine through an asymmetric soft saturator, measured sample by sample ----
@@ -119,20 +126,22 @@
         bullets: ["Driven by plotting each output sample against its input sample (measured curve)", "Straight dashed line = no change; bend = colour; teal band = live level swing", "Peak in/out and gain at the peak below the curve"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
-          const dx = 6, dy = HEAD_H + 6, dw = 252, dh = DEVICE_H - 12;
-          rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
+          const dx = 4, dy = HEAD_H + 4, dw = 262, dh = DEVICE_H - 8;
+          screen(c, th, dx, dy, dw, dh); dispHead(c, th, dx, dy + 2, NAME);
+          strip(c, th, dx, dy, dw, 22); strip(c, th, dx, dy + 116, dw, 16, true); strip(c, th, dx, dy + 132, dw, dh - 132, true);
           txt(c, dx + dw - 8, dy + 15, "Transfer curve", { color: th.dispText, align: "right" });
-          const px = dx + 10, py = dy + 26, pw = dw - 20, ph = 88, X = x => px + pw * (x + 1) / 2, Y = y => py + ph * (1 - (y + 1) / 2);
-          ctl(c, th, ps, { x: 262, y: HEAD_H + 6, w: 112, h: DEVICE_H - 12 }, 2, vals);
-          legend(c, th, dx + 10, py + ph + 11, [
+          const px = dx + 10, py = dy + 26, pw = dw - 20, ph = 86, X = x => px + pw * (x + 1) / 2, Y = y => py + ph * (1 - (y + 1) / 2);
+          ctl(c, th, ps, { x: 268, y: HEAD_H + 4, w: 112, h: DEVICE_H - 8 }, 2, vals);
+          legend(c, th, dx + 8, dy + 128, [
             [th.cyan, "Curve", "Cyan line: the output level the effect gives for each input level. A straight diagonal line means no change; a bend is the colour added."],
             [th.orange, "Samples", "Orange dots: the live signal, one dot per sample, input level across and output level up."],
             [th.cyan.length === 7 ? th.cyan + "66" : th.cyan, "Swing", "Cyan band: the range of input levels the signal reaches right now."],
             [th.scale, "No change", "Dashed line: where the curve would lie if the effect left the level unchanged."]], { gap: 5 });
           hint(dx, dy, dw, dh, "Transfer Curve Display", "Shows how the effect changes the level. Input level goes across, output level goes up. Measured from the input and output samples.");
           hint(px, py, pw, ph, "Curve Plot", "Both axes run from -1 to +1 (full scale). The farther the cyan curve bends from the diagonal, the more colour the effect adds.");
-          hint(dx + 8, dy + dh - 30, 170, 12, "Peak Readout", "The highest level of the input and of the output right now, in dB.");
-          hint(dx + 8, dy + dh - 17, 170, 12, "Gain At Peak", "How much louder or quieter the effect makes the peaks, in dB. Measured as output peak minus input peak.");
+          hint(dx + 8, dy + 135, 170, 12, "Peak Readout", "The highest level of the input and of the output right now, in dB.");
+          hint(dx + 8, dy + 147, 170, 12, "Gain At Peak", "How much louder or quieter the effect makes the peaks, in dB. Measured as output peak minus input peak.");
+          c.strokeStyle = th.dline; c.lineWidth = 1;
           c.beginPath(); c.moveTo(X(0), py); c.lineTo(X(0), py + ph); c.moveTo(px, Y(0)); c.lineTo(px + pw, Y(0)); c.stroke();
           if (!st.wi || st.wi.length < 16) return;
           c.globalAlpha = 0.28; c.fillStyle = th.cyan; c.fillRect(X(-st.pk), py + 1, X(st.pk) - X(-st.pk), ph - 1); c.globalAlpha = 1;
@@ -142,29 +151,30 @@
           else for (let i = 0; i <= 64; i++) { const x = -1 + i / 32; i ? c.lineTo(X(x), Y(sat(x))) : c.moveTo(X(x), Y(sat(x))); }
           c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.stroke();
           c.fillStyle = th.orange; for (let i = 0; i < st.wi.length; i++) c.fillRect(X(st.wi[i]) - 0.8, Y(st.wo[i]) - 0.8, 1.8, 1.8);
-          txt(c, dx + 8, dy + dh - 20, `Peak  in ${st.pI.toFixed(1)} dB   out ${st.pO.toFixed(1)} dB`, { color: th.dispText, align: "left" });
-          txt(c, dx + 8, dy + dh - 7, `Gain at peak ${f1(st.pO - st.pI)} dB`, { color: th.dispText, align: "left" });
+          txt(c, dx + 8, dy + 144, `Peak  in ${st.pI.toFixed(1)} dB   out ${st.pO.toFixed(1)} dB`, { color: th.dispText, align: "left" });
+          txt(c, dx + 8, dy + 156, `Gain at peak ${f1(st.pO - st.pI)} dB`, { color: th.dispText, align: "left" });
         } },
       { id: "B", name: "Harmonics", short: "Harmonics", width: 568, step: stepTone, live: liveTone,
         why: "A harmonic-bars display: fundamental plus the 2nd to 7th harmonics, input against output; even harmonics orange, odd cyan — like Roar's analysis.",
         bullets: ["Driven by an FFT of input and output at the fundamental and its multiples", "THD % and even/odd balance are measured, not read from dials", "Dials in a 2-column block on the right"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
-          const dx = 6, dy = HEAD_H + 6, dw = 370, dh = DEVICE_H - 12;
-          rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
-          legend(c, th, dx + dw - 112, dy + 15, [
+          const dx = 4, dy = HEAD_H + 4, dw = 374, dh = DEVICE_H - 8;
+          screen(c, th, dx, dy, dw, dh); dispHead(c, th, dx, dy + 2, NAME);
+          strip(c, th, dx, dy, dw, 22); strip(c, th, dx, dy + dh - 18, dw, 18, true);
+          legend(c, th, dx + dw - 116, dy + 15, [
             [th.dispText, "In", "Grey bars: the level of the input at the main pitch and its multiples."],
             [th.orange, "Even", "Orange bars: output level at the even harmonics (2f, 4f, 6f). They sound warm and soft."],
             [th.cyan, "Odd", "Cyan bars: output level at the main pitch and the odd harmonics (3f, 5f, 7f). They sound hard and edgy."]]);
           hint(dx, dy, dw, dh, "Harmonics Display", "Shows the main pitch (f) and the harmonics above it, 2f to 7f. Input is on the left of each pair, output on the right. Measured with a spectrum analysis.");
-          hint(dx + 30, dy + 28, dw - 38, 84, "Harmonic Bars", "Bar height is level in dB, from -90 (bottom) to 0 (top). A taller output bar than input bar means the effect added that harmonic.");
-          hint(dx + 2, dy + 28, 26, 84, "Level Scale", "Level in dB for the harmonic bars.");
-          hint(dx + 30, dy + 112, dw - 38, 12, "Harmonic Labels", "f is the main pitch. 2f, 3f and so on are multiples of it.");
-          hint(dx + 8, dy + dh - 20, 100, 14, "THD Readout", "Total harmonic distortion in %: the added harmonics compared with the main pitch. Higher means more colour.");
-          hint(dx + dw / 2 - 60, dy + dh - 20, 120, 14, "Even Versus Odd", "Level of the even harmonics minus the odd ones, in dB. Above 0 sounds warmer; below 0 sounds harder.");
-          hint(dx + dw - 100, dy + dh - 20, 94, 14, "Level Readout", "Output level of the main pitch, in dB.");
-          ctl(c, th, ps, { x: 382, y: HEAD_H + 6, w: 112, h: DEVICE_H - 12 }, 2, vals);
-          const px = dx + 30, py = dy + 28, pw = dw - 38, ph = 84, fy = v => py + ph * (1 - (clamp(v, -90, 0) + 90) / 90);
+          hint(dx + 30, dy + 26, dw - 38, 96, "Harmonic Bars", "Bar height is level in dB, from -90 (bottom) to 0 (top). A taller output bar than input bar means the effect added that harmonic.");
+          hint(dx + 2, dy + 26, 26, 96, "Level Scale", "Level in dB for the harmonic bars.");
+          hint(dx + 30, dy + 122, dw - 38, 12, "Harmonic Labels", "f is the main pitch. 2f, 3f and so on are multiples of it.");
+          hint(dx + 8, dy + dh - 16, 100, 14, "THD Readout", "Total harmonic distortion in %: the added harmonics compared with the main pitch. Higher means more colour.");
+          hint(dx + dw / 2 - 60, dy + dh - 16, 120, 14, "Even Versus Odd", "Level of the even harmonics minus the odd ones, in dB. Above 0 sounds warmer; below 0 sounds harder.");
+          hint(dx + dw - 100, dy + dh - 16, 94, 14, "Level Readout", "Output level of the main pitch, in dB.");
+          ctl(c, th, ps, { x: 380, y: HEAD_H + 4, w: 118, h: DEVICE_H - 8 }, 2, vals);
+          const px = dx + 30, py = dy + 26, pw = dw - 38, ph = 96, fy = v => py + ph * (1 - (clamp(v, -90, 0) + 90) / 90);
           c.strokeStyle = th.dline; c.lineWidth = 1;
           [0, -20, -40, -60, -80].forEach(v => { c.beginPath(); c.moveTo(px, fy(v)); c.lineTo(px + pw, fy(v)); c.stroke(); txt(c, dx + 4, fy(v) + 3, String(v), { color: th.scale, size: 8.5, align: "left" }); });
           if (!st.ho) return;
@@ -176,39 +186,43 @@
             c.fillStyle = even ? th.orange : th.cyan; c.fillRect(cx + 2, ho, 11, py + ph - ho);
             txt(c, cx, py + ph + 11, k === 1 ? "f" : k + "f", { color: th.scale, size: 9 });
           });
-          txt(c, dx + 8, dy + dh - 8, `${st.lv ? "Added THD" : "THD"} ${st.thd.toFixed(1)} %`, { color: th.dispText, align: "left" });
-          txt(c, dx + dw / 2, dy + dh - 8, `Even vs odd ${f1(st.eo)} dB`, { color: th.orange });
-          txt(c, dx + dw - 8, dy + dh - 8, `Level ${st.ho[0].toFixed(1)} dB`, { color: th.dispText, align: "right" });
+          txt(c, dx + 8, dy + dh - 5, `${st.lv ? "Added THD" : "THD"} ${st.thd.toFixed(1)} %`, { color: th.dispText, align: "left" });
+          txt(c, dx + dw / 2, dy + dh - 5, `Even vs odd ${f1(st.eo)} dB`, { color: th.orange });
+          txt(c, dx + dw - 8, dy + dh - 5, `Level ${st.ho[0].toFixed(1)} dB`, { color: th.dispText, align: "right" });
         } },
       { id: "C", name: "Waveform scope", short: "Scope", width: 548, step: stepTone, live: liveTone,
         why: "A zoomed oscilloscope: input and output waves on top of each other, with the added part drawn below — you see the rounding and the extra edge directly.",
         bullets: ["Driven by the raw input and output samples; lower trace = out − in", "RMS and crest factor (peak vs average) in and out as numbers", "Menu and arrows in the display strip, dials on the right"],
         draw(c, th, st, ps, vals) {
           gainStrip(c, th, this.width - GAIN_W - 4, st);
-          const dx = 6, dy = HEAD_H + 6, dw = 350, dh = DEVICE_H - 12;
-          rr(c, dx, dy, dw, dh, 3, th.display); dispHead(c, th, dx, dy, NAME);
-          legend(c, th, dx + dw - 110, dy + 15, [
+          const dx = 4, dy = HEAD_H + 4, dw = 360, dh = DEVICE_H - 8;
+          screen(c, th, dx, dy, dw, dh); dispHead(c, th, dx, dy + 2, NAME);
+          strip(c, th, dx, dy, dw, 22); strip(c, th, dx, dy + dh - 18, dw, 18, true);
+          legend(c, th, dx + dw - 114, dy + 15, [
             [th.dispText, "In", "Grey wave: the sound going into the effect."],
             [th.cyan, "Out", "Cyan wave: the sound coming out of the effect."],
             [th.orange, "Added", "Orange wave in the lower strip: output minus input, which is what the effect adds to the sound."]], { line: true });
           hint(dx, dy, dw, dh, "Waveform Display", "Shows a few milliseconds of the sound as a wave. Measured from the input and output samples.");
-          hint(dx + 8, dy + 24, dw - 16, 78, "Input And Output Waves", "Grey is the input wave, cyan is the output wave. If the cyan wave looks rounder or sharper than the grey one, the effect is adding colour.");
-          hint(dx + 8, dy + 106, dw - 16, 26, "Added Signal", "Output minus input, drawn larger so you can see it. A flat line means the effect adds nothing.");
-          hint(dx + 8, dy + dh - 16, 140, 12, "RMS Readout", "Average level of the input, then of the output, in dB.");
-          hint(dx + dw - 150, dy + dh - 16, 142, 12, "Crest Readout", "Peak level minus average level, input then output, in dB. A lower number means the peaks are rounder.");
-          ctl(c, th, ps, { x: 362, y: HEAD_H + 6, w: 112, h: DEVICE_H - 12 }, 2, vals);
-          const wx = dx + 8, ww = dw - 16, wy = dy + 24, wh = 78, ry = dy + 106, rh = 26;
+          hint(dx + 8, dy + 25, dw - 16, 80, "Input And Output Waves", "Grey is the input wave, cyan is the output wave. If the cyan wave looks rounder or sharper than the grey one, the effect is adding colour.");
+          hint(dx + 8, dy + 109, dw - 16, 32, "Added Signal", "Output minus input, drawn larger so you can see it. A flat line means the effect adds nothing.");
+          hint(dx + 8, dy + dh - 15, 140, 12, "RMS Readout", "Average level of the input, then of the output, in dB.");
+          hint(dx + dw - 150, dy + dh - 15, 142, 12, "Crest Readout", "Peak level minus average level, input then output, in dB. A lower number means the peaks are rounder.");
+          ctl(c, th, ps, { x: 366, y: HEAD_H + 4, w: 112, h: DEVICE_H - 8 }, 2, vals);
+          const wx = dx + 8, ww = dw - 16, wy = dy + 26, wh = 78, ry = dy + 110, rh = 30;
           c.fillStyle = th.dline; c.fillRect(wx, wy + wh / 2, ww, 1); c.fillRect(wx, ry + rh / 2, ww, 1);
-          if (st.dg > 1) txt(c, dx + dw - 8, ry - 1, `Added ×${st.dg}`, { color: th.scale, size: 8.5, align: "right" });
+          strip(c, th, dx, dy + 106, dw, 0, true);
+          if (st.dg > 1) txt(c, wx + 2, ry + 8, `Added ×${st.dg}`, { color: th.scale, size: 8.5, align: "left" });
           if (!st.wi || st.wi.length < 16) return;
           const M = Math.min(80, st.wi.length), off = st.wi.length - M, dg = st.dg || 1;
+          // auto zoom (RUBRIC 2.6): input and output share one zoom so they stay comparable
+          const g = fit(st, "scope", absPeak([st.wi, st.wo], M)); zoomTag(c, th, dx + 148, dy + 15, g);
           [[st.wi, th.dispText, 1.3], [st.wo, th.cyan, 2]].forEach(([b, col, lw]) => {
-            c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = wy + wh / 2 - b[off + i] * wh * 0.46; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
+            c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = wy + wh / 2 - b[off + i] * g * wh * 0.5; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
             c.strokeStyle = col; c.lineWidth = lw; c.stroke(); });
           c.beginPath(); for (let i = 0; i < M; i++) { const X = wx + i * ww / (M - 1), Y = ry + rh / 2 - (st.wo[off + i] - st.wi[off + i]) * rh * 0.9 * dg; i ? c.lineTo(X, Y) : c.moveTo(X, Y); }
           c.strokeStyle = th.orange; c.lineWidth = 1.5; c.stroke();
-          txt(c, dx + 8, dy + dh - 6, `RMS ${st.rI.toFixed(1)} → ${st.rO.toFixed(1)} dB`, { color: th.dispText, align: "left" });
-          txt(c, dx + dw - 8, dy + dh - 6, `Crest ${(st.pI - st.rI).toFixed(1)} → ${(st.pO - st.rO).toFixed(1)} dB`, { color: th.dispText, align: "right" });
+          txt(c, dx + 8, dy + dh - 5, `RMS ${st.rI.toFixed(1)} → ${st.rO.toFixed(1)} dB`, { color: th.dispText, align: "left" });
+          txt(c, dx + dw - 8, dy + dh - 5, `Crest ${(st.pI - st.rI).toFixed(1)} → ${(st.pO - st.rO).toFixed(1)} dB`, { color: th.dispText, align: "right" });
         } },
     ],
   };

@@ -19,16 +19,40 @@ const HEAD_H = 18;      // device title bar
 function tok() {
   const t = S.themes[S.theme];
   const light = S.theme === "light";
-  return {
-    body: t.DetailViewBackground, text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
+  const th = {
+    // structure (design/RUBRIC.md): tiles on a lighter background, 2 px gutters between them
+    gutter: t.SurfaceHighlight, tile: t.SurfaceBackground, divider: light ? "#8a8a8a" : "#262626",
+    body: t.SurfaceHighlight, panel: t.SurfaceBackground,
+    text: t.ControlForeground, dim: light ? "#3d3d3d" : "#8a8a8a",
     display: t.RetroDisplayBackground, dline: t.RetroDisplayBackgroundLine,
     orange: t.RetroDisplayForeground, cyan: t.RetroDisplayForeground2, arc: t.RangeDefault,
     track: light ? "#8f8f8f" : "#1e1e1e", needle: light ? "#121212" : "#d9d9d9",
     ctrlBg: t.ControlBackground, frame: light ? "#4f4f4f" : "#111111", on: t.ViewControlOn,
     meterBg: t.MeterBackground, scale: t.RetroDisplayScaleText.slice(0, 7), title: t.RetroDisplayTitle,
-    dispText: light ? "#cfcfcf" : "#b5b5b5", panel: light ? "rgba(0,0,0,0.08)" : "rgba(0,0,0,0.18)",
+    dispText: light ? "#cfcfcf" : "#b5b5b5",
     green: "#1ec15a", greenDim: "#0f6b33",
   };
+  // in the device: the user's own Live theme (live.colors), when it reported
+  if (S.live) for (const k in S.live) th[k] = S.live[k];
+  return th;
+}
+
+// ---------------------------------------------------------------- structure (design/RUBRIC.md)
+// A tile holds one group of things (rule 1). Flat, radius 1, no border.
+function tile(c, th, x, y, w, h) { rr(c, x, y, w, h, 1, th.tile); }
+// A screen shows measurements (rule 2). It is a tile of its own.
+function screen(c, th, x, y, w, h) { rr(c, x, y, w, h, 2, th.display); }
+// A strip at the top (or bottom) edge of a screen for readouts, legend and small buttons,
+// split from the plot by a 1 px line (rule 2.3). Returns the y of the text baseline.
+function strip(c, th, x, y, w, h = 18, bottom = false) {
+  c.fillStyle = th.dline;
+  c.fillRect(x + 3, bottom ? y : y + h - 1, w - 6, 1);
+  return bottom ? y + h - 5 : y + h - 6;
+}
+// A 1 px line between two groups in one tile (rule 4.4).
+function divider(c, th, x, y, h, horizontal = false, w = 0) {
+  c.fillStyle = th.divider;
+  if (horizontal) c.fillRect(x, y, w, 1); else c.fillRect(x, y, 1, h);
 }
 
 // ---------------------------------------------------------------- signal simulation
@@ -246,19 +270,42 @@ function limiterMeters(c, th, x, y, w, h, st) {
   txt(c, x + 28, y + h - 5, `${Math.max(-60, st.inL).toFixed(1)}`, { color: th.cyan, size: 9.5 });
   txt(c, x + w - 26, y + h - 5, `-${st.gr.toFixed(1)}`, { color: th.orange, size: 9.5 });
 }
-function waveScroll(c, th, x, y, w, h, hist, key, color) {
+// Auto zoom (RUBRIC 2.6): a gain that makes the loudest visible point fill ~90 % of the plot.
+// Zooms out fast when the signal gets louder, in slowly when it gets quieter; 1x..32x.
+// The state lives on `holder` under `key`, so each plot keeps its own zoom.
+function fit(holder, key, peak, target = 0.9) {
+  const want = Math.max(1, Math.min(32, target / Math.max(peak, 1e-4)));
+  const k = "_fit_" + key, g = holder[k] || want;
+  holder[k] = want < g ? want : g + (want - g) * 0.03;
+  return holder[k];
+}
+// zoom readout for a strip: "Zoom +12 dB"; empty at 1x
+function zoomText(g) { return g > 1.05 ? `Zoom +${(20 * Math.log10(g)).toFixed(0)} dB` : ""; }
+// peak of numeric fields `keys` over the newest n entries of a history
+function histPeak(hist, keys, n) {
+  let p = 0;
+  for (let i = Math.max(0, hist.length - n); i < hist.length; i++) for (const k of keys) p = Math.max(p, Math.abs(hist[i][k] || 0));
+  return p;
+}
+
+// Scrolling waveform, newest on the right. `gain` scales the amplitude; omitted, it is
+// fitted to the loudest visible point of this and the other waveform fields (dry/wet, in/out).
+function waveScroll(c, th, x, y, w, h, hist, key, color, gain) {
+  const n = Math.min(hist.length, w);
+  if (gain === undefined) gain = fit(hist, "wave" + Math.round(w), histPeak(hist, ["dry", "wet", key], n));
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-  const mid = y + h / 2, n = Math.min(hist.length, w);
+  const mid = y + h / 2, a = h * 0.5 * gain;
   c.fillStyle = color; c.beginPath(); c.moveTo(x + w, mid);
-  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - hist[hist.length - 1 - i][key] * h * 0.46);
-  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + hist[hist.length - 1 - i][key] * h * 0.46 * (0.7 + 0.3 * Math.abs(noise(i))));
+  for (let i = 0; i < n; i++) c.lineTo(x + w - i, mid - Math.min(h / 2, hist[hist.length - 1 - i][key] * a));
+  for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + Math.min(h / 2, hist[hist.length - 1 - i][key] * a * (0.7 + 0.3 * Math.abs(noise(i)))));
   c.fill(); c.restore();
+  return gain;
 }
 // Decay display. With real measurements (st.envHist: output RMS dB at ~30 Hz, newest last) it
 // draws the last 3 s of output level and estimates the decay time as 3 x the time the level
 // takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
-  rr(c, x, y, w, h, 3, th.display);
+  screen(c, th, x, y, w, h);
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
@@ -322,7 +369,7 @@ function legend(c, th, x, y, items, o = {}) {
 
 // Several options of one category in one device, switched by the View selector at the top of
 // the Input/Output column, like the display buttons of Live's Compressor. Each view keeps its
-// own state (and history), so switching is instant. Narrower views are centred.
+// own state (and history), so switching is instant. Narrower views start at the left.
 function composeViews(des, ids) {
   const opts = ids.map(id => des.options.find(o => o.id === id)).filter(Boolean);
   const W = Math.max(...opts.map(o => o.width));
@@ -342,8 +389,11 @@ function composeViews(des, ids) {
     },
     draw(c, th, st, ps, vals) {
       const v = Math.min(st.view || 0, opts.length - 1), o = opts[v];
-      const dx = Math.round((W - o.width) / 2);
+      // a narrower view starts at the left; a plain tile fills the rest up to the Input/Output
+      // column, so no bare background shows (RUBRIC 1.1)
+      const dx = 0, gap = W - o.width;
       st.dx = dx;
+      if (gap > 0) tile(c, th, o.width - GAIN_W - 4, HEAD_H + 4, gap - 2, DEVICE_H - 8);
       c.save(); c.translate(dx, 0);
       S.offX = dx; S.gainX = W - GAIN_W - 4; S.views = { labels, active: v };
       try { o.draw(c, th, sub(st)[v], ps, vals); }
@@ -370,8 +420,8 @@ function wrapText(c, x, y, w, text, o = {}) {
 const GAIN_W = 64;
 function gainStrip(c, th, x, st) {
   if (S.gainX !== undefined) x = S.gainX - S.offX;    // several views: always at the right edge
-  const y = HEAD_H + 6, h = DEVICE_H - 12;
-  rr(c, x, y, GAIN_W, h, 3, th.panel);
+  const y = HEAD_H + 4, h = DEVICE_H - 8;
+  tile(c, th, x, y, GAIN_W, h);
   let top = y;
   if (S.views) {                                      // view selector at the top of the column
     viewTabsV(c, th, x + 3, y + 3, GAIN_W - 6, S.views.labels, S.views.active);
@@ -744,7 +794,8 @@ function ctl(c, th, ps, vals, area) {
   });
 }
 function tw(c, s) { c.font = `400 9.5px ${FONT}`; return c.measureText(s).width; }
-function rd(c, th, x, y, st) {
+function rd(c, th, x, y, st, cols) {
+  const [lc, vc] = cols || [th.dim, th.text];
   const z = Z(st), f = v => Math.max(-60, v).toFixed(1) + " dB";
   const tips = { In: ["Input Level", "Loudness of the sound going into the effect, in dB. Measured from the input signal."],
     Out: ["Output Level", "Loudness of the sound coming out of the effect, in dB. Measured from the output signal."],
@@ -752,8 +803,8 @@ function rd(c, th, x, y, st) {
   let cx = x;
   [["In", f(st.inL)], ["Out", f(st.outL)], ["Change", (z.dl >= 0 ? "+" : "") + z.dl.toFixed(1) + " dB"]].forEach(([l, v]) => {
     const x0 = cx;
-    txt(c, cx, y, l, { color: th.dim, align: "left" }); cx += tw(c, l) + 5;
-    txt(c, cx, y, v, { color: th.text, align: "left" }); cx += tw(c, v) + 16;
+    txt(c, cx, y, l, { color: lc, align: "left" }); cx += tw(c, l) + 5;
+    txt(c, cx, y, v, { color: vc, align: "left" }); cx += tw(c, v) + 16;
     hint(x0 - 1, y - 10, cx - 14 - x0, 13, tips[l][0], tips[l][1]);
   });
 }
@@ -761,20 +812,35 @@ const GS = (c, th, st, W) => gainStrip(c, th, W - GAIN_W - 4, st);
 function fmtF(f) { return f >= 1000 ? (f / 1000).toFixed(f >= 10000 ? 1 : 2) + " kHz" : Math.round(f) + " Hz"; }
 const greyFill = () => S.theme === "light" ? "#6a6a6a" : "#505050";
 
-// Spectrum panel: grey = input spectrum, line = output spectrum, curve = response measured as out/in per band.
+// Row with the effect menu + arrows (+ In/Out/Change readout) on a tile or in a screen strip. x,y = top-left of that row.
+function selRow(c, th, x, y, st, withRd, inScreen) {
+  menu(c, th, x + 4, y + 4, 130, E); arrows(c, th, x + 138, y + 4);
+  if (withRd) rd(c, th, x + 178, y + 15, st, inScreen ? [th.dispText, th.cyan] : null);
+}
+// Tile with a block of dials.
+function dialTile(c, th, ps, vals, x, y, w, h) { tile(c, th, x, y, w, h); ctl(c, th, ps, vals, { x: x + 4, y: y + 4, w: w - 8, h: h - 8 }); }
+
+// Spectrum screen: grey = input spectrum, line = output spectrum, curve = response measured as out/in per band.
+// Layout: optional top strip (o.top px, for the caller's menu / readouts), plot, bottom strip (o.bot px, legend).
+// Returns the plot rectangle.
 function spec(c, th, x, y, w, h, st, o = {}) {
-  const z = Z(st); rr(c, x, y, w, h, 3, th.display);
-  const px = b => x + 4 + (w - 8) * b / (NB - 1), py = v => y + h - 6 - (h - 12) * clamp((v + 80) / 80, 0, 1);
-  const my = y + h / 2, RG = o.range || 24, cy = v => my - clamp(v, -RG, RG) / RG * (h / 2 - 8);
-  c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+  const z = Z(st), top = o.top || 0, bot = o.bot === undefined ? 15 : o.bot;
+  screen(c, th, x, y, w, h);
+  if (top) strip(c, th, x, y, w, top);
+  const by = y + h - bot;
+  if (bot) strip(c, th, x, by, w, bot, true);
+  const Y = y + top, H = h - top - bot;
+  const px = b => x + 4 + (w - 8) * b / (NB - 1), base = Y + H - 3, py = v => base - (H - 7) * clamp((v + 80) / 80, 0, 1);
+  const my = Y + H / 2, RG = o.range || 24, cy = v => my - clamp(v, -RG, RG) / RG * (H / 2 - 4);
+  c.save(); c.beginPath(); c.rect(x, Y, w, H); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
-  [100, 1000, 10000].forEach(f => { const gx = x + 4 + (w - 8) * xf(f); c.beginPath(); c.moveTo(gx, y); c.lineTo(gx, y + h); c.stroke(); });
+  [100, 1000, 10000].forEach(f => { const gx = x + 4 + (w - 8) * xf(f); c.beginPath(); c.moveTo(gx, Y); c.lineTo(gx, Y + H); c.stroke(); });
   [-RG / 2, RG / 2].forEach(v => { c.beginPath(); c.moveTo(x, cy(v)); c.lineTo(x + w, cy(v)); c.stroke(); });
   c.strokeStyle = th.scale; c.beginPath(); c.moveTo(x, my); c.lineTo(x + w, my); c.stroke();
   if (o.inFill !== false) {
-    c.globalAlpha = o.faint ? 0.5 : 1; c.fillStyle = greyFill(); c.beginPath(); c.moveTo(px(0), y + h);
+    c.globalAlpha = o.faint ? 0.5 : 1; c.fillStyle = greyFill(); c.beginPath(); c.moveTo(px(0), base);
     for (let b = 0; b < NB; b++) c.lineTo(px(b), py(z.inS[b]));
-    c.lineTo(px(NB - 1), y + h); c.fill(); c.globalAlpha = 1;
+    c.lineTo(px(NB - 1), base); c.fill(); c.globalAlpha = 1;
   }
   if (o.outLine !== false) {
     c.strokeStyle = o.outColor || th.cyan; c.lineWidth = 1.2; c.beginPath();
@@ -793,65 +859,82 @@ function spec(c, th, x, y, w, h, st, o = {}) {
   }
   if (o.cent) {
     const mx = x + 4 + (w - 8) * xf(z.cent);
-    c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath(); c.moveTo(mx, y + 27); c.lineTo(mx, y + h - 12); c.stroke();
+    c.strokeStyle = th.orange; c.lineWidth = 1; c.beginPath(); c.moveTo(mx, Y + 4); c.lineTo(mx, Y + H - 12); c.stroke();
   }
-  c.restore();
-  if (o.cent) {
-    const mx = x + 4 + (w - 8) * xf(z.cent);
-    txt(c, clamp(mx, x + 30, x + w - 30), y + 23, fmtF(z.cent), { color: th.orange, size: 9 });
-    hint(clamp(mx, x + 30, x + w - 30) - 24, y + 14, 48, 12, "Centre Frequency", "The middle of the output sound by frequency (its spectral centre). Measured from the output spectrum.");
-    hint(mx - 3, y + 27, 6, h - 39, "Centre Marker", "Marks the centre frequency of the output sound. It moves as the sound changes.");
-  }
+  let dot = null;
   if (o.peakDot) {
     let bi = 0; for (let b = 1; b < NB; b++) if (Math.abs(z.meas[b]) > Math.abs(z.meas[bi])) bi = b;
-    const dx = px(bi), dy = cy(z.meas[bi]);
-    c.beginPath(); c.arc(dx, dy, 5, 0, Math.PI * 2); c.fillStyle = th.orange; c.fill();
+    dot = { bi, x: px(bi), y: cy(z.meas[bi]) };
+    c.beginPath(); c.arc(dot.x, dot.y, 5, 0, Math.PI * 2); c.fillStyle = th.orange; c.fill();
     c.strokeStyle = th.display; c.lineWidth = 1.5; c.stroke();
-    txt(c, clamp(dx, x + 46, x + w - 46), clamp(dy < my ? dy - 9 : dy + 15, y + 22, y + h - 14), `${fmtF(fq(bi / (NB - 1)))}  ${z.meas[bi] >= 0 ? "+" : ""}${z.meas[bi].toFixed(1)} dB`, { color: th.dispText, size: 9 });
-    hint(dx - 6, dy - 6, 12, 12, "Strongest Change", "The dot sits where the filter changes the level most. The text gives its frequency and the change in dB. Measured from output against input.");
   }
   if (o.labels !== false) {
-    [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 4 + (w - 8) * xf(f) + 3, y + h - 3, s, { color: th.scale, size: 8.5, align: "left" }));
+    [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 4 + (w - 8) * xf(f) + 3, Y + H - 3, s, { color: th.scale, size: 8.5, align: "left" }));
     txt(c, x + w - 5, my - 3, "0 dB", { color: th.scale, size: 8.5, align: "right" });
   }
-  if (o.leg !== false) {
+  c.restore();
+  // readouts of the measurement go in the top strip (RUBRIC 2.3)
+  const ty = y + top - 6;
+  if (o.cent && top) {
+    const v = fmtF(z.cent), vw = tw(c, v);
+    txt(c, x + w - 8, ty, v, { color: th.orange, align: "right" });
+    txt(c, x + w - 8 - vw - 5, ty, "Centre", { color: th.dispText, align: "right" });
+    hint(x + w - 8 - vw - 45, y + 2, vw + 50, top - 4, "Centre Frequency", "The middle of the output sound by frequency (its spectral centre), measured from the output spectrum. The orange marker in the display shows the same place.");
+    hint(x + 4 + (w - 8) * xf(z.cent) - 3, Y + 4, 6, H - 16, "Centre Marker", "Marks the centre frequency of the output sound. It moves as the sound changes.");
+  }
+  if (dot && top) {
+    const v = `${fmtF(fq(dot.bi / (NB - 1)))}  ${z.meas[dot.bi] >= 0 ? "+" : ""}${z.meas[dot.bi].toFixed(1)} dB`, vw = tw(c, v);
+    txt(c, x + w - 8, ty, v, { color: th.orange, align: "right" });
+    txt(c, x + w - 8 - vw - 5, ty, "Peak", { color: th.dispText, align: "right" });
+    hint(x + w - 8 - vw - 40, y + 2, vw + 45, top - 4, "Strongest Change", "Frequency and size of the biggest change the filter makes, in dB. The orange dot in the display sits at the same place. Measured from output against input.");
+    hint(dot.x - 6, dot.y - 6, 12, 12, "Strongest Change", "The dot sits where the filter changes the level most. The strip above gives its frequency and the change in dB. Measured from output against input.");
+  }
+  if (o.leg !== false && bot) {
     const L = {
       Input: [greyFill(), "Input", "The sound going into the effect, by frequency. Taller means louder. Measured with an FFT (a frequency analysis) of the input."],
       Output: [o.outColor || th.cyan, "Output", "The sound coming out of the effect, by frequency. Measured with an FFT of the output."],
       Response: [o.curveColor || th.orange, "Response", "What the filter does at each frequency, in dB. Above the middle line is louder, below is quieter. It is the output level minus the input level."],
       Peak: [th.scale, "Peak", "The highest output level at each frequency. It is held for a moment, then falls."],
     };
-    let lx = x + 6;
-    if (o.inFill !== false) lx = legend(c, th, lx, y + 11, [L.Input]);
+    const ly = by + bot - 5;
+    let lx = x + 8;
+    if (o.inFill !== false) lx = legend(c, th, lx, ly, [L.Input]);
     const lines = [];
     if (o.outLine !== false) lines.push(L.Output);
     if (o.peak) lines.push(L.Peak);
     if (o.curve !== false) lines.push(L.Response);
-    legend(c, th, lx, y + 11, lines, { line: true });
+    legend(c, th, lx, ly, lines, { line: true });
   }
-  hint(x, y, w, h, o.title || "Frequency Display", o.info || "Frequency runs left to right, 20 Hz to 20 kHz. The legend in the top left names each colour. The middle line is 0 dB for the Response.");
+  hint(x, Y, w, H, o.title || "Frequency Display", o.info || "Frequency runs left to right, 20 Hz to 20 kHz. The legend in the bottom strip names each colour. The middle line is 0 dB for the Response.");
+  return { x, y: Y, w, h: H, by };
 }
-// Difference bars: out minus in per band (16 bands). Cyan = boost, orange = cut.
+// Difference bars: out minus in per band (16 bands). Cyan = boost, orange = cut. Title and legend in the top strip.
 function diffBars(c, th, x, y, w, h, st, n = 16) {
-  const z = Z(st); rr(c, x, y, w, h, 3, th.display);
-  const my = y + h / 2, bw = (w - 8) / n;
+  const z = Z(st), top = 18;
+  screen(c, th, x, y, w, h);
+  const ty = strip(c, th, x, y, w, top);
+  const Y = y + top, H = h - top, my = Y + H / 2, bw = (w - 8) / n;
   c.fillStyle = th.dline; c.fillRect(x + 4, my, w - 8, 1);
   for (let k = 0; k < n; k++) {
-    const v = clamp(mavg(z.meas, k, NB / n), -18, 18), hh = Math.abs(v) / 18 * (h / 2 - 4);
+    const v = clamp(mavg(z.meas, k, NB / n), -18, 18), hh = Math.abs(v) / 18 * (H / 2 - 4);
     c.fillStyle = v >= 0 ? th.cyan : th.orange;
     c.fillRect(x + 4 + k * bw + 1, v >= 0 ? my - hh : my, Math.max(1, bw - 2), Math.max(0.5, hh));
   }
-  txt(c, x + 6, y + 10, "Change per band", { color: th.scale, size: 8.5, align: "left" });
+  txt(c, x + 8, ty, "Change per band", { color: th.dispText, size: 8.5, align: "left" });
   c.font = `400 8.5px ${FONT}`;
-  legend(c, th, x + 6 + Math.ceil(c.measureText("Change per band").width) + 12, y + 10, [
+  legend(c, th, x + 8 + Math.ceil(c.measureText("Change per band").width) + 12, ty, [
     [th.cyan, "Boost", "Bars above the middle line: this band gets louder. Measured as output minus input."],
     [th.orange, "Cut", "Bars below the middle line: this band gets quieter. Measured as output minus input."]]);
-  hint(x, y, w, h, "Change Per Band", "Sixteen bars from low to high frequency. Each bar shows how much the filter raises or lowers that band, in dB. Measured from output against input.");
+  hint(x, Y, w, H, "Change Per Band", "Sixteen bars from low to high frequency. Each bar shows how much the filter raises or lowers that band, in dB. Measured from output against input.");
 }
-// Bands in vs out: grey = input level, cyan = output level, orange = the part the filter changed.
-function bandsIO(c, th, x, y, w, h, st, n = 16) {
-  const z = Z(st); rr(c, x, y, w, h, 3, th.display);
-  const bw = (w - 12) / n, base = y + h - 12, ph = h - 26;
+// Bands in vs out: grey = input level, cyan = output level, orange = the part the filter changed. Legend in the bottom strip.
+function bandsIO(c, th, x, y, w, h, st, n = 16, top = 0) {
+  const z = Z(st), bot = 15;
+  screen(c, th, x, y, w, h);
+  if (top) strip(c, th, x, y, w, top);
+  const by = y + h - bot, ly = strip(c, th, x, by, w, bot, true);
+  const Y = y + top, H = h - top - bot;
+  const bw = (w - 12) / n, base = Y + H - 12, ph = H - 16;
   const hy = v => ph * clamp((v + 80) / 80, 0, 1);
   c.strokeStyle = th.dline; c.lineWidth = 1;
   [0.25, 0.5, 0.75].forEach(f => { c.beginPath(); c.moveTo(x + 4, base - ph * f); c.lineTo(x + w - 4, base - ph * f); c.stroke(); });
@@ -861,56 +944,72 @@ function bandsIO(c, th, x, y, w, h, st, n = 16) {
     c.fillStyle = th.cyan; c.fillRect(bx + 1, base - hy(lo), bw - 3, hy(lo));
     c.fillStyle = o >= i ? th.green : th.orange; c.fillRect(bx + 1, base - hy(hi), bw - 3, hy(hi) - hy(lo));
     c.fillStyle = th.dispText; c.fillRect(bx + 1, base - hy(i), bw - 3, 1);
-    if (k % 3 === 0) txt(c, bx + bw / 2, y + h - 3, fmtF(fq((k + 0.5) / n)).replace(" kHz", "k").replace(" Hz", ""), { color: th.scale, size: 8.5 });
+    if (k % 3 === 0) txt(c, bx + bw / 2, Y + H - 3, fmtF(fq((k + 0.5) / n)).replace(" kHz", "k").replace(" Hz", ""), { color: th.scale, size: 8.5 });
   }
-  const lx = legend(c, th, x + 6, y + 10, [[th.dispText, "Input", "The thin line marks the input level of each band. Measured with an FFT of the input."]], { line: true });
-  legend(c, th, lx, y + 10, [
+  const lx = legend(c, th, x + 8, ly, [[th.dispText, "Input", "The thin line marks the input level of each band. Measured with an FFT of the input."]], { line: true });
+  legend(c, th, lx, ly, [
     [th.cyan, "Kept", "The part of the level that is the same in input and output."],
     [th.green, "Boost", "Level the filter adds in this band. Output is louder than input."],
     [th.orange, "Cut", "Level the filter removes in this band. Output is quieter than input."]]);
-  hint(x, y, w, h, "Band Meters", "Sixteen level bars from low to high frequency. The bar height is the output level; the thin line is the input level. Measured with an FFT of input and output.");
+  hint(x, Y, w, H, "Band Meters", "Sixteen level bars from low to high frequency. The bar height is the output level; the thin line is the input level. Measured with an FFT of input and output.");
 }
-// Scrolling sonogram of the output spectrum; low frequencies at the bottom.
-function sonogram(c, th, x, y, w, h, st) {
-  const z = Z(st); rr(c, x, y, w, h, 3, th.display);
-  const rows = 24, cw = 2, ncol = Math.floor((w - 28) / cw), ch = (h - 22) / rows, x0 = x + w - 4;
-  c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+// Scrolling sonogram of the output spectrum; low frequencies at the bottom. Legend and note in the top strip.
+function sonogram(c, th, x, y, w, h, st, withRd) {
+  const z = Z(st), top = 18, bot = withRd ? 15 : 0;
+  screen(c, th, x, y, w, h);
+  const ty = strip(c, th, x, y, w, top);
+  if (bot) { strip(c, th, x, y + h - bot, w, bot, true); rd(c, th, x + 8, y + h - 5, st, [th.dispText, th.cyan]); }
+  const Y = y + top, H = h - top - bot;
+  const rows = 24, cw = 2, ncol = Math.floor((w - 28) / cw), ch = (H - 8) / rows, x0 = x + w - 4;
+  c.save(); c.beginPath(); c.rect(x, Y, w, H); c.clip();
   for (let i = 0; i < Math.min(ncol, z.cols.length); i++) {
     const col = z.cols[z.cols.length - 1 - i];
     for (let r = 0; r < rows; r++) {
       const lvl = clamp(((col[2 * r] + col[2 * r + 1]) / 2 + 64) / 58, 0, 1);
       if (lvl < 0.12) continue;
       c.globalAlpha = Math.min(1, 0.2 + (lvl - 0.12) * 1.1); c.fillStyle = lvl > 0.85 ? th.orange : th.cyan;
-      c.fillRect(x0 - (i + 1) * cw, y + h - 4 - (r + 1) * ch, cw, ch);
+      c.fillRect(x0 - (i + 1) * cw, Y + H - 4 - (r + 1) * ch, cw, ch);
     }
   }
   c.globalAlpha = 1; c.restore();
-  [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 4, y + h - 4 - (h - 22) * xf(f) - 2, s, { color: th.scale, size: 8.5, align: "left" }));
-  txt(c, x + w - 6, y + 10, "Output spectrum, newest on the right", { color: th.scale, size: 8.5, align: "right" });
-  legend(c, th, x + 6, y + 10, [
+  [[100, "100"], [1000, "1k"], [10000, "10k"]].forEach(([f, s]) => txt(c, x + 5, Y + H - 4 - (H - 8) * xf(f) - 2, s, { color: th.scale, size: 8.5, align: "left" }));
+  txt(c, x + w - 8, ty, "Output spectrum, newest on the right", { color: th.dispText, size: 8.5, align: "right" });
+  legend(c, th, x + 8, ty, [
     [th.cyan, "Loud", "Cyan marks sound at that frequency and time. The brighter, the louder."],
     [th.orange, "Very loud", "Orange marks the loudest parts of the output."]]);
-  hint(x, y, w, h, "Sonogram", "Time runs left to right, newest on the right. Low frequencies are at the bottom, high at the top. Measured with an FFT of the output.");
+  hint(x, Y, w, H, "Sonogram", "Time runs left to right, newest on the right. Low frequencies are at the bottom, high at the top. Measured with an FFT of the output.");
 }
-function scope(c, th, x, y, w, h, st) {
-  const z = Z(st); rr(c, x, y, w, h, 3, th.display);
-  const my = y + h / 2, a = h / 2 - 8;
+// Scope screen: top strip (o.top, caller draws the menu there) with the zoom readout, legend + time window in the bottom strip.
+// Input and output share one auto zoom (RUBRIC 2.6).
+function scope(c, th, x, y, w, h, st, o = {}) {
+  const z = Z(st), top = o.top || 18, bot = 15;
+  screen(c, th, x, y, w, h);
+  strip(c, th, x, y, w, top);
+  const by = y + h - bot, ly = strip(c, th, x, by, w, bot, true);
+  const Y = y + top, H = h - top - bot, my = Y + H / 2, a = H / 2 - 3;
   c.strokeStyle = th.dline; c.lineWidth = 1;
   [-0.45, 0, 0.45].forEach(f => { c.beginPath(); c.moveTo(x + 4, my + f * a * 2); c.lineTo(x + w - 4, my + f * a * 2); c.stroke(); });
-  hint(x, y, w, h, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound.");
+  hint(x, Y, w, H, "Scope", "The input and output waveforms drawn on top of each other, over a window of 20 ms. Where they differ, the filter changed the sound. The picture is enlarged when the sound is quiet.");
+  legend(c, th, x + 8, ly, [
+    [th.scale, "Input", "The waveform going into the effect. Measured from the input signal."],
+    [th.cyan, "Output", "The waveform coming out of the effect. Measured from the output signal."]], { line: true });
+  txt(c, x + w - 8, ly, "20 ms", { color: th.dispText, size: 8.5, align: "right" });
+  hint(x + w - 44, by + 1, 40, 13, "Time Window", "The scope shows 20 milliseconds of sound.");
   if (!z.sIn.length) return;
-  c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+  let pk = 0; for (const arr of [z.sIn, z.sOut]) for (const v of arr) pk = Math.max(pk, Math.abs(v));
+  const g = fit(z, "scope", pk);
+  const zt = zoomText(g);
+  if (zt) {
+    txt(c, x + w - 8, y + top - 6, zt, { color: th.dispText, align: "right", size: 8.5 });
+    hint(x + w - 80, y + 2, 76, top - 4, "Zoom", "The waveform is enlarged so the loudest point fills the screen. The number says by how much; quiet signals get a larger zoom. Input and output share one zoom.");
+  }
+  c.save(); c.beginPath(); c.rect(x, Y, w, H); c.clip();
   for (const [arr, col, lw] of [[z.sIn, th.scale, 1], [z.sOut, th.cyan, 1.5]]) {
     c.strokeStyle = col; c.lineWidth = lw; c.beginPath();
-    arr.forEach((v, i) => { const px = x + 4 + (w - 8) * i / (arr.length - 1), py = my - clamp(v * 1.6, -1.1, 1.1) * a; i ? c.lineTo(px, py) : c.moveTo(px, py); });
+    arr.forEach((v, i) => { const px = x + 4 + (w - 8) * i / (arr.length - 1), py = my - clamp(v * g, -1, 1) * a; i ? c.lineTo(px, py) : c.moveTo(px, py); });
     c.stroke();
   }
   c.restore();
-  legend(c, th, x + 6, y + 10, [
-    [th.scale, "Input", "The waveform going into the effect. Measured from the input signal."],
-    [th.cyan, "Output", "The waveform coming out of the effect. Measured from the output signal."]], { line: true });
-  txt(c, x + w - 6, y + 10, "20 ms", { color: th.scale, size: 8.5, align: "right" });
-  hint(x + w - 36, y + 1, 32, 12, "Time Window", "The scope shows 20 milliseconds of sound.");
 }
 function wrapStep(st, dt) { sim(st, dt); }
 // Real mode: fill the same Z state that sim() fills, from the measured frame m (never from drums or dial values).
@@ -952,9 +1051,10 @@ DESIGNS["Filter"] = {
       bullets: ["FFT of input (grey) and output (orange line); cyan curve = output minus input per band", "Driven by audio: the curve is measured, not read from the dials", "Dials in one row below; In / Out / Change readout on top"],
       draw(c, th, st, ps, vals) {
         st.vals = vals;
-        menu(c, th, 6, HEAD_H + 4, 130, E); arrows(c, th, 140, HEAD_H + 4); rd(c, th, 200, HEAD_H + 15, st);
-        spec(c, th, 4, HEAD_H + 22, 592, 88, st, { curveColor: th.cyan, outColor: th.orange, thick: 2.5 });
-        ctl(c, th, ps, vals, { x: 4, y: HEAD_H + 116, w: 592, h: 50 });
+        const y0 = HEAD_H + 4, H = DEVICE_H - 8, sh = 101;
+        spec(c, th, 4, y0, 594, sh, st, { curveColor: th.cyan, outColor: th.orange, thick: 2.5, top: 22 });
+        selRow(c, th, 4, y0, st, true, true);
+        dialTile(c, th, ps, vals, 4, y0 + sh + 2, 594, H - sh - 2);
         GS(c, th, st, 668);
       } },
     { id: "B", name: "Channel EQ", short: "Bands", width: 668, step: wrapStep, live: liveZ,
@@ -962,10 +1062,12 @@ DESIGNS["Filter"] = {
       bullets: ["Top: spectrum and measured response curve; bottom: change per band (16 bars)", "Input / Output gain dials and meters on the right, from the same audio", "Dial block holds up to 10 controls"],
       draw(c, th, st, ps, vals) {
         st.vals = vals;
-        menu(c, th, 6, HEAD_H + 4, 130, E); arrows(c, th, 140, HEAD_H + 4);
-        ctl(c, th, ps, vals, { x: 4, y: HEAD_H + 22, w: 250, h: 145 });
-        spec(c, th, 258, HEAD_H + 6, 338, 102, st, { faint: true });
-        diffBars(c, th, 258, HEAD_H + 112, 338, 52, st);
+        const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+        tile(c, th, 4, y0, 252, H);
+        selRow(c, th, 4, y0, st, false);
+        ctl(c, th, ps, vals, { x: 8, y: y0 + 24, w: 244, h: H - 28 });
+        spec(c, th, 258, y0, 340, 100, st, { faint: true });
+        diffBars(c, th, 258, y0 + 102, 340, H - 102, st);
         GS(c, th, st, 668);
       } },
     { id: "C", name: "Auto Filter", short: "Centre", width: 548, step: wrapStep, live: liveZ,
@@ -973,9 +1075,12 @@ DESIGNS["Filter"] = {
       bullets: ["Thick curve = measured response; filled shape = output spectrum", "Orange marker = centre frequency of the output sound (spectral centroid)", "Dial block on the right"],
       draw(c, th, st, ps, vals) {
         st.vals = vals;
-        menu(c, th, 6, HEAD_H + 4, 130, E); arrows(c, th, 140, HEAD_H + 4); rd(c, th, 180, HEAD_H + 15, st);
-        spec(c, th, 4, HEAD_H + 22, 228, 143, st, { faint: true, thick: 3, cent: true });
-        ctl(c, th, ps, vals, { x: 236, y: HEAD_H + 22, w: 240, h: 145 });
+        const y0 = HEAD_H + 4, H = DEVICE_H - 8;
+        tile(c, th, 4, y0, 474, 23);
+        selRow(c, th, 4, y0, st, true);
+        const y1 = y0 + 25, h1 = H - 25;
+        spec(c, th, 4, y1, 228, h1, st, { faint: true, thick: 3, cent: true, top: 18 });
+        dialTile(c, th, ps, vals, 234, y1, 244, h1);
         GS(c, th, st, 548);
       } },
   ],
@@ -1065,7 +1170,36 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-function anything() {} // category, pvalue, …: not needed for drawing
+// live.colors "everything": one message per theme colour ("live_surface_bg r g b a")
+const LIVE_COLORS = {};
+function anything() {
+  const n = messagename;
+  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
+  LIVE_COLORS[n] = arrayfromargs(arguments);
+  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
+  liveTheme();
+}
+// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+const LIVE_MAP = {
+  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
+  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+};
+const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
+let themeTask = null;
+function liveTheme() {
+  // the colours arrive as a burst of messages: apply once, after the burst
+  if (themeTask) return;
+  themeTask = new Task(function () {
+    themeTask = null;
+    const L = {};
+    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
+    S.live = L;
+    mgraphics.redraw();
+  });
+  themeTask.schedule(20);
+}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -1145,20 +1279,21 @@ function publishLayout() {
 // ---------------------------------------------------------------- Info View
 // Live shows a hovered object's annotation in its Info View. The display sets its own
 // annotation to the hint under the mouse; dials get their effect's control name and text.
-let hints = [], lastHint = null;
+let hints = [], lastHint = "";
 function onidle(x, y) {
   let best = null;
   const yy = y + HEAD_H;
   for (const h of hints) if (x >= h.x && x <= h.x + h.w && yy >= h.y && yy <= h.y + h.h && (!best || h.w * h.h <= best.w * best.h)) best = h;
-  if (best === lastHint) return;
-  lastHint = best;
+  const key = best ? best.title + "|" + best.text : "";
+  if (key === lastHint) return;               // hints are rebuilt on every paint: compare text
+  lastHint = key;
   log("hover", best ? best.title : "-");
   try {
     BOX.setattr("annotation_name", best ? best.title : "Airwindows " + CATEGORY);
     BOX.setattr("annotation", best ? best.text : (OPT.why || ""));
   } catch (e) {}
 }
-function onidleout() { lastHint = null; }
+function onidleout() { lastHint = ""; }
 let annotated = "";
 function annotateDials() {
   const key = (S.effName || "") + params.map(p => p.name).join("|");
@@ -1181,6 +1316,7 @@ function paint() {
   const th = tok();
   try {
     S.hints = [];
+    c.fillStyle = th.gutter; c.fillRect(0, HEAD_H, OPT.width, DEVICE_H);   // gutters (RUBRIC 1.1)
     OPT.draw(c, th, st, params, params.map(() => 0.5));
     hints = S.hints;
   } catch (e) {
@@ -1192,4 +1328,4 @@ function paint() {
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }
+function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

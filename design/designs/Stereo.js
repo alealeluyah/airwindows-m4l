@@ -12,7 +12,7 @@
   };
   const S2 = Math.SQRT1_2;
   const dr = t => drums(((t % 2) + 2) % 2);          // drums() for any t, also before the start
-  const Y0 = HEAD_H + 6, FH = DEVICE_H - 12;          // top and height of the working area
+  const Y0 = HEAD_H + 4, FH = DEVICE_H - 8;           // top and height of the working area (4 px margin)
 
   // Simulated stereo signal: a centred drum loop with some side content. The "effect" slowly
   // changes width and balance, so in and out differ in a visible way.
@@ -74,18 +74,13 @@
     }
     st.inL = Math.max(st.inL === undefined ? -120 : st.inL - 24 * dt, Math.max(pkIn[0], pkIn[1]));
     st.outL = Math.max(st.outL === undefined ? -120 : st.outL - 24 * dt, Math.max(pkOut[0], pkOut[1]));
-    // vectorscope: 12 samples of the 64-sample scopes per frame, mid up / side across. One common
-    // gain (1x..4x, slow) keeps quiet passages visible; input and output share it.
+    // vectorscope: 12 samples of the 64-sample scopes per frame, mid up / side across. The
+    // display zooms with fit() (RUBRIC 2.6); input and output share one zoom.
     const iL = m.inScopeL || [], iR = m.inScopeR || [], oL = m.scopeL || [], oR = m.scopeR || [];
-    let pk = 0;
-    for (let i = 0; i < 64; i++) pk = Math.max(pk, Math.abs(fin(iL[i], 0)), Math.abs(fin(iR[i], 0)), Math.abs(fin(oL[i], 0)), Math.abs(fin(oR[i], 0)));
-    s.sp = Math.max(pk, s.sp - 0.5 * dt);
-    s.ag += (clamp(0.7 / Math.max(0.05, s.sp), 1, 4) - s.ag) * 0.1;
-    const g = s.ag;
     const n = Math.min(iL.length, iR.length, oL.length, oR.length);
     for (let j = 0; j < 12 && n > 0; j++) {
       const i = Math.min(n - 1, Math.floor(j * n / 12 + 2));
-      s.pts.push({ xi: (iL[i] - iR[i]) * S2 * g, yi: (iL[i] + iR[i]) * S2 * g, xo: (oL[i] - oR[i]) * S2 * g, yo: (oL[i] + oR[i]) * S2 * g });
+      s.pts.push({ xi: (iL[i] - iR[i]) * S2, yi: (iL[i] + iR[i]) * S2, xo: (oL[i] - oR[i]) * S2, yo: (oL[i] + oR[i]) * S2 });
     }
     while (s.pts.length > 260) s.pts.shift();
     // correlation from mid/side power, width = side / mid amplitude, balance from channel peaks
@@ -105,8 +100,8 @@
   }
 
   // dials in a panel; "No controls" note when the effect has none
-  function ctl(c, th, ps, vals, a) {
-    rr(c, a.x, a.y, a.w, a.h, 3, th.panel);
+  function ctl(c, th, ps, vals, a, noTile) {
+    if (!noTile) tile(c, th, a.x, a.y, a.w, a.h);
     if (!ps.length) {
       txt(c, a.x + a.w / 2, a.y + a.h / 2 - 1, "No controls", { color: th.dim, size: 10.5 });
       txt(c, a.x + a.w / 2, a.y + a.h / 2 + 11, "this effect has no dials", { color: th.dim, size: 8.5 });
@@ -142,17 +137,22 @@
   }
 
   function gonio(c, th, x, y, w, h, s) {
-    rr(c, x, y, w, h, 3, th.display);
-    hint(x, y, w, h, "Vectorscope Display", "Each dot is one moment of the sound. Straight up means the same in left and right (mono). Wide sideways spread means a wide stereo image. Measured from the left and right channels, before and after the effect.");
-    const cx = x + w / 2, cy = y + h / 2 + 3, R = Math.min(w, h) / 2 - 17;
-    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
+    screen(c, th, x, y, w, h);
+    const pH = h - 17;                                     // plot height; the bottom strip holds legend and zoom
+    hint(x, y, w, pH, "Vectorscope Display", "Each dot is one moment of the sound. Straight up means the same in left and right (mono). Wide sideways spread means a wide stereo image. Measured from the left and right channels, before and after the effect.");
+    const cx = x + w / 2, cy = y + pH / 2, R = Math.min(w, pH) / 2 - 16;
+    c.save(); c.beginPath(); c.rect(x, y, w, pH); c.clip();
     c.strokeStyle = th.dline; c.lineWidth = 1;
     c.beginPath(); c.arc(cx, cy, R, 0, Math.PI * 2); c.stroke();
     c.beginPath(); c.arc(cx, cy, R / 2, 0, Math.PI * 2); c.stroke();
     c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx + R, cy); c.moveTo(cx, cy - R); c.lineTo(cx, cy + R); c.stroke();
     c.beginPath(); c.moveTo(cx - R * S2, cy - R * S2); c.lineTo(cx + R * S2, cy + R * S2);
     c.moveTo(cx + R * S2, cy - R * S2); c.lineTo(cx - R * S2, cy + R * S2); c.stroke();
-    const n = s.pts.length, k = R * 1.15;
+    // one zoom for input and output: the farthest dot lands at ~90 % of the radius
+    const n = s.pts.length;
+    let pk = 0;
+    for (let i = 0; i < n; i++) { const p = s.pts[i]; pk = Math.max(pk, Math.abs(p.xi), Math.abs(p.yi), Math.abs(p.xo), Math.abs(p.yo)); }
+    const g = fit(s, "gonio", pk), k = R * g;
     for (let i = 0; i < n; i++) {
       const p = s.pts[i];
       c.globalAlpha = 0.25 + 0.55 * (i / n);
@@ -167,14 +167,18 @@
     txt(c, cx, y + 10, "M", { color: th.scale, size: 9 });
     txt(c, x + 6, y + 11, "L", { color: th.scale, size: 9, align: "left" });
     txt(c, x + w - 6, y + 11, "R", { color: th.scale, size: 9, align: "right" });
-    txt(c, cx, y + h - 4, "S", { color: th.scale, size: 9 });
-    if (s.ag > 1.05) txt(c, cx + 14, y + h - 4, "×" + s.ag.toFixed(1), { color: th.scale, size: 8.5, align: "left" });
-    legend(c, th, x + 6, y + h - 5, [[th.dispText, "In", "Grey dots: the stereo image of the signal going into the effect."], [th.cyan, "Out", "Cyan dots: the stereo image of the signal coming out of the effect."]]);
+    txt(c, cx, y + pH - 4, "S", { color: th.scale, size: 9 });
+    const by = strip(c, th, x, y + h - 17, w, 17, true);
+    legend(c, th, x + 8, by, [[th.dispText, "In", "Grey dots: the stereo image of the signal going into the effect."], [th.cyan, "Out", "Cyan dots: the stereo image of the signal coming out of the effect."]]);
+    const zt = zoomText(g);
+    if (zt) {
+      txt(c, x + w - 8, by, zt, { color: th.dispText, size: 8.5, align: "right" });
+      hint(x + w - 70, y + h - 15, 66, 13, "Zoom", "The dots are enlarged so the farthest dot reaches the edge of the circle. The number says by how much; quiet signals get a larger zoom. Input and output share it.");
+    }
     hint(cx - 8, y + 1, 16, 12, "Mono Axis (M)", "The up-down line. Dots on it carry the same signal in left and right. Measured from the sum of left and right.");
-    hint(cx - 8, y + h - 14, 16, 12, "Side Axis (S)", "The across line. Dots far from the centre line are different in left and right. Measured from the difference of left and right.");
+    hint(cx - 8, y + pH - 14, 16, 12, "Side Axis (S)", "The across line. Dots far from the centre line are different in left and right. Measured from the difference of left and right.");
     hint(x + 2, y + 1, 14, 12, "Left Channel Axis (L)", "The diagonal to the upper left. Dots here are louder in the left channel.");
     hint(x + w - 16, y + 1, 14, 12, "Right Channel Axis (R)", "The diagonal to the upper right. Dots here are louder in the right channel.");
-    if (s.ag > 1.05) hint(cx + 12, y + h - 13, 26, 12, "Scope Gain", "How much the dots are magnified so quiet sound stays visible. Input and output share it.");
   }
 
   const pc = v => Math.round(v * 100) + "%";
@@ -190,12 +194,13 @@
         bullets: ["Driven by: 64-sample L/R scopes of input and output (mid up, side across, shared auto gain ×1-4); correlation and width from the mid/side RMS values", "Correlation, width and balance bars for input and output; the orange zone marks out-of-phase risk", "Menu and arrows top-left, dials below (0 to 6 handled); Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
           const s = st.st; if (!s) return;
-          head(c, th, 6, Y0, 112);
-          ctl(c, th, ps, vals, { x: 4, y: Y0 + 20, w: 158, h: FH - 20 });
-          gonio(c, th, 166, Y0, 190, FH, s);
-          // readout panel
-          const x = 362, w = 152, y = Y0;
-          rr(c, x, y, w, FH, 3, th.display);
+          tile(c, th, 4, Y0, 150, FH);                       // selector + dials
+          head(c, th, 8, Y0 + 4, 104);
+          ctl(c, th, ps, vals, { x: 4, y: Y0 + 22, w: 150, h: FH - 22 }, true);
+          gonio(c, th, 156, Y0, 210, FH, s);
+          // readout screen
+          const x = 368, w = 150, y = Y0;
+          screen(c, th, x, y, w, FH);
           hint(x, y, w, FH, "Stereo Readouts", "Correlation, width and balance of the stereo image. Grey is the input, cyan is the output.");
           const row = (yy, label, v, col) => {
             txt(c, x + 8, yy + 8, label, { color: col, align: "left", bold: true });
@@ -232,15 +237,16 @@
         bullets: ["Driven by: peak level of L, R, mid (L+R) and side (L-R), before and after; thin lines hold the peak", "Width and balance readouts next to the menu", "Dials in one block on the right; Input / Output gain strip at the far right"],
         draw(c, th, st, ps, vals) {
           const s = st.st; if (!s) return;
-          head(c, th, 6, Y0, 112);
-          rr(c, 164, Y0, 146, 14, 2, th.display);
-          const e = ph(c, th, 170, Y0 + 11, "Width", pc(s.wO), th.cyan, "Output Width", "How wide the output is. 0% is mono. Measured as side level divided by mid level.");
-          ph(c, th, e + 10, Y0 + 11, "Bal", f1(s.bO), th.orange, "Output Balance", "Which side the output is louder on. Negative is left, positive is right. Measured from the left and right peak levels.");
-          const dx = 6, dy = Y0 + 20, dw = 304, dh = FH - 20;
-          rr(c, dx, dy, dw, dh, 3, th.display);
-          hint(dx, dy, dw, dh, "Level Meters Display", "Eight level meters: left, right, mid and side. Input on the left half, output on the right half. Measured from the peak level of each signal.");
-          legend(c, th, dx + 96, dy + 14, [[th.green, "L/R", "Green meters: the left and right channels."], [th.cyan, "M/S", "Cyan meters: mid (left plus right) and side (left minus right)."], [th.text, "Peak", "The thin line on each meter holds the highest recent level."]]);
-          const mt = dy + 24, mh = dh - 42;
+          const dx = 4, dy = Y0, dw = 306, dh = FH;
+          screen(c, th, dx, dy, dw, dh);
+          head(c, th, dx + 5, dy + 4, 92);
+          strip(c, th, dx, dy, dw, 22);
+          const e = ph(c, th, dx + 142, dy + 15, "Width", pc(s.wO), th.cyan, "Output Width", "How wide the output is. 0% is mono. Measured as side level divided by mid level.");
+          ph(c, th, e + 10, dy + 15, "Bal", f1(s.bO), th.orange, "Output Balance", "Which side the output is louder on. Negative is left, positive is right. Measured from the left and right peak levels.");
+          hint(dx, dy + 22, dw, dh - 38, "Level Meters Display", "Eight level meters: left, right, mid and side. Input on the left half, output on the right half. Measured from the peak level of each signal.");
+          strip(c, th, dx, dy + dh - 16, dw, 16, true);
+          legend(c, th, dx + 8, dy + dh - 5, [[th.green, "L/R", "Green meters: the left and right channels."], [th.cyan, "M/S", "Cyan meters: mid (left plus right) and side (left minus right)."], [th.text, "Peak", "The thin line on each meter holds the highest recent level."]]);
+          const mt = dy + 38, mh = dh - 16 - 14 - 38;
           const grp = [["Input", ["Li", "Ri", "Mi", "Si"], dx + 14, th.dispText], ["Output", ["Lo", "Ro", "Mo", "So"], dx + 176, th.cyan]];
           const names = ["L", "R", "M", "S"];
           const yOf = v => mt + mh * (-v / 48);
@@ -250,7 +256,7 @@
           });
           hint(dx + 140, mt, 26, mh, "Level Scale", "Meter scale in dB. 0 dB is the loudest level, lower numbers are quieter.");
           grp.forEach(([t, keys, gx, tc]) => {
-            txt(c, gx + 55, dy + 14, t, { color: tc, bold: true, size: 10 });
+            txt(c, gx + 55, dy + 33, t, { color: tc, bold: true, size: 10 });
             keys.forEach((k, i) => {
               const f = clamp(1 + s.lv[k] / 48, 0, 1), x = gx + i * 27 + (i > 1 ? 8 : 0);
               meterV(c, th, x, mt, 15, mh, f, false, i > 1 ? th.cyan : th.green);
@@ -260,7 +266,7 @@
               txt(c, x + 7.5, mt + mh + 11, names[i], { color: th.dispText, size: 9.5, bold: true });
             });
           });
-          ctl(c, th, ps, vals, { x: 316, y: Y0, w: 160, h: FH });
+          ctl(c, th, ps, vals, { x: 312, y: Y0, w: 166, h: FH });
           gainStrip(c, th, 548 - GAIN_W - 4, st);
         } },
       { id: "C", name: "Field history", short: "History", width: 648, step, live: stLive,
@@ -268,10 +274,11 @@
         bullets: ["Driven by: left/right level balance and L/R correlation, measured every block", "Top lane: balance (left to right); bottom lane: correlation (-1 to +1) with an orange mono-risk zone", "Dials in one row under the display; Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
           const s = st.st; if (!s) return;
-          const dx = 6, dy = Y0, dw = 568, dh = 98;
-          rr(c, dx, dy, dw, dh, 3, th.display);
-          hint(dx, dy, dw, dh, "Stereo History Display", "Two lanes scroll from right (now) to left (past): balance on top, correlation below. Measured from the left and right channels, before and after the effect.");
-          head(c, th, dx + 4, dy + 4, 100);
+          const dx = 4, dy = Y0, dw = 574, dh = 100;
+          screen(c, th, dx, dy, dw, dh);
+          strip(c, th, dx, dy, dw, 22);
+          hint(dx, dy + 22, dw, dh - 22, "Stereo History Display", "Two lanes scroll from right (now) to left (past): balance on top, correlation below. Measured from the left and right channels, before and after the effect.");
+          head(c, th, dx + 5, dy + 4, 100);
           let e = ph(c, th, dx + 160, dy + 15, "Balance", f1(s.bO), th.orange, "Output Balance", "Which side the output is louder on. Negative is left, positive is right. Measured from the left and right peak levels.");
           e = ph(c, th, e + 16, dy + 15, "Corr", f1(s.cO), th.cyan, "Output Correlation", "How alike left and right are. +1 is mono, 0 is wide, -1 is opposite.");
           ph(c, th, e + 16, dy + 15, "Width", pc(s.wO), th.cyan, "Output Width", "How wide the output is. 0% is mono. Measured as side level divided by mid level.");
@@ -288,18 +295,18 @@
             path(key + "O"); c.strokeStyle = col; c.lineWidth = 2; c.stroke();
             c.restore();
           };
-          lane(dy + 22, 34, "b", th.orange);
-          lane(dy + 60, 34, "c", th.cyan, true);
-          hint(lx, dy + 22, lw, 34, "Balance Lane", "Shows which side is louder over time. Up is right, down is left, the middle line is centred. Measured from the left and right peak levels.");
-          hint(lx, dy + 60, lw, 34, "Correlation Lane", "Shows how alike left and right are over time. Up is mono (+1), the middle is wide (0), down is opposite (-1).");
-          hint(lx, dy + 77, lw, 17, "Mono-Risk Zone", "The orange area marks negative correlation. Sound here can drop out when played in mono.");
-          hint(lx - 26, dy + 22, 24, 72, "Lane Scale", "Top lane: R is up, L is down. Bottom lane: +1 is up, -1 is down.");
-          txt(c, lx - 4, dy + 32, "R", { color: th.scale, size: 8.5, align: "right" });
-          txt(c, lx - 4, dy + 54, "L", { color: th.scale, size: 8.5, align: "right" });
-          txt(c, lx - 4, dy + 70, "+1", { color: th.scale, size: 8.5, align: "right" });
-          txt(c, lx - 4, dy + 93, "-1", { color: th.scale, size: 8.5, align: "right" });
-          txt(c, lx + lw - 4, dy + 91, "mono risk", { color: th.orange, size: 8, align: "right" });
-          ctl(c, th, ps, vals, { x: 6, y: dy + dh + 4, w: 568, h: FH - dh - 4 });
+          lane(dy + 24, 34, "b", th.orange);
+          lane(dy + 62, 34, "c", th.cyan, true);
+          hint(lx, dy + 24, lw, 34, "Balance Lane", "Shows which side is louder over time. Up is right, down is left, the middle line is centred. Measured from the left and right peak levels.");
+          hint(lx, dy + 62, lw, 34, "Correlation Lane", "Shows how alike left and right are over time. Up is mono (+1), the middle is wide (0), down is opposite (-1).");
+          hint(lx, dy + 79, lw, 17, "Mono-Risk Zone", "The orange area marks negative correlation. Sound here can drop out when played in mono.");
+          hint(lx - 26, dy + 24, 24, 72, "Lane Scale", "Top lane: R is up, L is down. Bottom lane: +1 is up, -1 is down.");
+          txt(c, lx - 4, dy + 34, "R", { color: th.scale, size: 8.5, align: "right" });
+          txt(c, lx - 4, dy + 56, "L", { color: th.scale, size: 8.5, align: "right" });
+          txt(c, lx - 4, dy + 72, "+1", { color: th.scale, size: 8.5, align: "right" });
+          txt(c, lx - 4, dy + 95, "-1", { color: th.scale, size: 8.5, align: "right" });
+          txt(c, lx + lw - 4, dy + 93, "mono risk", { color: th.orange, size: 8, align: "right" });
+          ctl(c, th, ps, vals, { x: 4, y: dy + dh + 2, w: 574, h: FH - dh - 2 });
           gainStrip(c, th, 648 - GAIN_W - 4, st);
         } },
     ],
