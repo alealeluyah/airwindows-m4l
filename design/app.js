@@ -15,7 +15,12 @@ function renderNav() {
     const st = d && d.option ? `<span class="st ok">✓ ${d.option}</span>` : (DESIGNS[c] ? `<span class="st">review</span>` : `<span class="st">later</span>`);
     return `<a href="#${encodeURIComponent(c)}" class="${S.cat === c ? "on" : ""}">${c}${st}</a>`;
   };
-  nav.innerHTML = `<a href="#All" class="${S.cat === "All" ? "on" : ""}">All devices (today)<span class="st">${categories().length}</span></a>`
+  const approved = categories().filter(c => S.decisions[c] && S.decisions[c].option).length;
+  setTimeout(() => { const b = document.getElementById("build"); if (b) b.onclick = buildDevices; });
+  nav.innerHTML = `<div style="padding:4px 18px 10px"><button class="btn primary" id="build" style="width:100%">Build devices</button>
+      <div style="font-size:12px;color:var(--dim);margin-top:4px">${approved} of ${categories().length} approved; the others use option A</div>
+      <pre id="buildOut" style="white-space:pre-wrap;font-size:11px;color:var(--dim);margin:6px 0 0"></pre></div>`
+    + `<a href="#All" class="${S.cat === "All" ? "on" : ""}">All devices (today)<span class="st">${categories().length}</span></a>`
     + `<h3>To review</h3>${ready.map(row).join("")}` + (later.length ? `<h3>Not ready yet</h3>${later.map(row).join("")}` : "");
 }
 
@@ -25,6 +30,16 @@ function renderAll() {
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(540px,1fr));gap:22px">
     ${categories().map(c => `<figure style="margin:0"><a href="#${encodeURIComponent(c)}"><img src="current/${c.replace(/ /g, "_")}.png" style="width:522px;border-radius:3px;display:block"></a>
       <figcaption style="margin-top:4px">Airwindows ${c} <span style="color:var(--dim)">· ${S.byCat[c].length} effects</span></figcaption></figure>`).join("")}</div>`;
+}
+
+async function buildDevices() {
+  const b = document.getElementById("build"), out = document.getElementById("buildOut");
+  b.disabled = true; b.textContent = "Building…"; out.textContent = "";
+  try {
+    const r = await (await fetch("/api/build", { method: "POST" })).json();
+    out.textContent = r.ok ? r.output.trim().split("\n").slice(-1)[0] + "\nIn Live: drag the device from User Library › Airwindows again." : "Failed:\n" + r.output;
+  } catch (e) { out.textContent = "Failed: " + e; }
+  b.disabled = false; b.textContent = "Build devices";
 }
 
 function renderPage() {
@@ -44,6 +59,7 @@ function renderPage() {
     <div class="refs">${D.refs.map(([f, n]) => `<figure><img src="refs/${f}" alt="${n}"><figcaption>${n}</figcaption></figure>`).join("")}</div>
     ${cur}
     <h4>Options</h4>
+    ${S.signal === "real" ? `<p class="lead" style="margin:0">Real audio: Airwindows ${D.effect} on a drum loop, measured exactly as the device measures it. The displays show what each option would show in Live.</p>` : ""}
     ${D.options.map(o => `
       <div class="opt ${dec.option === o.id ? "chosen" : ""}" data-id="${o.id}">
         <div class="top"><b>${o.id} — ${o.name}</b><span class="why">${o.why}</span></div>
@@ -62,8 +78,10 @@ function renderPage() {
     const canvas = page.querySelector(`canvas[data-id="${o.id}"]`);
     const sel = page.querySelector(`select[data-id="${o.id}"]`);
     const mock = { o, canvas, st: newState(), eff: S.reg.find(e => e.name === D.effect) };
-    // pre-roll 5 s of simulated signal so histories and meters are full on the first frame
-    for (let k = 0; k < 600; k++) { mock.st.t += 1 / 120; o.step(mock.st, 1 / 120); }
+    // pre-roll 5 s of signal so histories and meters are full on the first frame
+    mock.fi = 0; mock.acc = 0;
+    if (S.signal === "real") loadFrames(cat).then(fr => { if (fr) for (let k = 0; k < 150; k++) feedReal(mock, fr, 1 / 30); });
+    else for (let k = 0; k < 600; k++) { mock.st.t += 1 / 120; o.step(mock.st, 1 / 120); }
     sel.onchange = () => { mock.eff = S.reg.find(e => e.name === sel.value); };
     // options may handle clicks (e.g. view buttons): o.click(x, y, st) in device pixels
     canvas.onclick = ev => {
@@ -88,6 +106,27 @@ async function save(patch) {
 
 // ---------------------------------------------------------------- animation
 let last = performance.now();
+// "Real audio": frames recorded by `awtool frames` (the real Airwindows effect on a drum loop),
+// fed to the option's live() mapping exactly as the device feeds airwin~'s measurements.
+const FRAMES = {};
+function loadFrames(cat) {
+  if (!(cat in FRAMES)) {
+    const p = fetch(`frames/${encodeURIComponent(cat)}.json`).then(r => r.ok ? r.json() : null).catch(() => null);
+    p.then(j => { p.done = j; });
+    FRAMES[cat] = p;
+  }
+  return FRAMES[cat];
+}
+function feedReal(m, fr, dt) {
+  m.acc += dt;
+  while (m.acc >= 1 / 30) {
+    m.acc -= 1 / 30;
+    const f = fr.frames[m.fi++ % fr.frames.length];
+    m.st.t += 1 / 30;
+    (m.o.live || liveGeneric)(m.st, measureFromFrame(f), 1 / 30);
+  }
+}
+
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   const th = tok(), dpr = window.devicePixelRatio || 1;
@@ -99,8 +138,10 @@ function frame(now) {
     }
     const c = m.canvas.getContext("2d");
     c.setTransform(z * dpr, 0, 0, z * dpr, 0, 0);
-    for (let k = 0; k < 2; k++) { m.st.t += dt / 2; m.o.step(m.st, dt / 2); }
+    if (S.signal === "real") { const fr = FRAMES[S.cat] && FRAMES[S.cat].done; if (fr) feedReal(m, fr, dt); }
+    else for (let k = 0; k < 2; k++) { m.st.t += dt / 2; m.o.step(m.st, dt / 2); }
     S.effName = m.eff ? m.eff.name : "";
+    S.effWhat = m.eff ? m.eff.what : "";
     const ps = (m.eff ? m.eff.params : []).map((p, i) => ({ ...p, _i: i }));
     const vals = ps.map(p => p.default);
     header(c, th, W, `Airwindows ${S.cat}`);
@@ -124,7 +165,12 @@ async function init() {
   document.querySelectorAll("#zoom button").forEach(b => b.onclick = () => {
     S.zoom = +b.dataset.z; document.querySelectorAll("#zoom button").forEach(x => x.classList.toggle("on", x === b));
     S.mocks.forEach(m => m.canvas.width = 0); });
+  document.querySelectorAll("#signal button").forEach(b => b.onclick = () => {
+    S.signal = b.dataset.s; document.querySelectorAll("#signal button").forEach(x => x.classList.toggle("on", x === b));
+    renderPage(); });
   const qp = new URLSearchParams(location.search);
+  if (qp.get("real")) S.signal = "real";
+  document.querySelectorAll("#signal button").forEach(x => x.classList.toggle("on", x.dataset.s === (S.signal || "sim")));
   if (qp.get("zoom")) S.zoom = +qp.get("zoom");
   if (qp.get("theme")) S.theme = qp.get("theme");
   document.querySelectorAll("#zoom button").forEach(x => x.classList.toggle("on", +x.dataset.z === S.zoom));

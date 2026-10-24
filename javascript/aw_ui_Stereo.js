@@ -140,6 +140,49 @@ function stepReverb(st, dt) {
   st.inL = Math.max(db(d.env * 0.8 + 0.01), st.inL - 24 * dt); st.outL = Math.max(db(Math.min(1, st.tail) * 0.8 + 0.01), st.outL - 24 * dt);
 }
 
+// ---------------------------------------------------------------- real measurements
+// One display frame from airwin~ (about 30 per second), the same in the device and in the
+// review page's "Real audio" mode (frames recorded with `awtool frames`):
+//   m.inPkDb[2], m.outPkDb[2]   peak level per channel, dBFS (-120 = silence)
+//   m.inRmsDb, m.outRmsDb       RMS of the mono sum, dBFS
+//   m.gainDb                    outRms - inRms (0 when the input is silent)
+//   m.corr                      output L/R correlation, -1..1
+//   m.inPk, m.outPk             linear mono peaks of the frame
+//   m.specIn[48], m.specOut[48] band levels, dBFS, 20 Hz .. 20 kHz, log-spaced (bandHz(i) = centre)
+//   m.xfer[32]                  mean output per input-amplitude bin (-1..1 in 32 bins); -9 = no data
+//   m.scopeL[64], m.scopeR[64]  recent output samples (about 5 ms)
+//   m.inScopeL[64], m.inScopeR[64] the same input samples
+//   m.ms[4]                     RMS dBFS of input mid, input side, output mid, output side
+//   m.specDiff[48]              band levels of (output - input), dBFS: what the effect added/removed
+//   m.diffRmsDb, m.dcOut        level of (output - input) in dBFS; output DC offset (linear)
+//   m.xcorr[64]                 |cross-correlation| of output vs input for lags 0..2047 samples
+//                               (bin b = lags 32b..32b+31, ~0.67 ms per bin at 48 kHz); a pure
+//                               delay of d samples peaks in bin d/32 (echo taps, pre-delay)
+// A design option may define live(st, m, dt) to fill the state its draw() reads; otherwise
+// liveGeneric fills inL / outL / gr / hist.
+function measureFromFrame(f) {
+  const l = f.levels, s = f.scope || [];
+  return { inPkDb: [l[0], l[1]], outPkDb: [l[2], l[3]], inRmsDb: l[4], outRmsDb: l[5], gainDb: l[6], corr: l[7],
+           inPk: f.peaks[0], outPk: f.peaks[1], specIn: f.spec_in, specOut: f.spec_out, xfer: f.xfer,
+           scopeL: s.slice(0, 64), scopeR: s.slice(64),
+           inScopeL: (f.scope_in || []).slice(0, 64), inScopeR: (f.scope_in || []).slice(64),
+           ms: f.ms || [-120, -120, -120, -120], specDiff: f.spec_diff || [],
+           diffRmsDb: f.diff ? f.diff[0] : -120, dcOut: f.diff ? f.diff[1] : 0, xcorr: f.xcorr || [] };
+}
+function bandHz(i) { return 20 * Math.pow(1000, (i + 0.5) / 48); }
+
+// Generic mapping for designs without their own live(): level, gain change and history.
+function liveGeneric(st, m, dt) {
+  const inDb = Math.max(m.inPkDb[0], m.inPkDb[1]), outDb = Math.max(m.outPkDb[0], m.outPkDb[1]);
+  st.inL = Math.max(inDb, (st.inL === undefined ? -60 : st.inL) - 24 * dt);
+  st.outL = Math.max(outDb, (st.outL === undefined ? -60 : st.outL) - 24 * dt);
+  const grNow = Math.max(0, -m.gainDb);
+  st.gr = (st.gr || 0) + (grNow - (st.gr || 0)) * (grNow > (st.gr || 0) ? 0.6 : 0.15);
+  st.hist = st.hist || [];
+  st.hist.push({ inA: m.inPk, out: outDb, gr: st.gr, dry: m.inPk, wet: m.outPk });
+  if (st.hist.length > 800) st.hist.shift();
+}
+
 // ---------------------------------------------------------------- displays
 function grNeedle(c, th, x, y, w, h, gr) {
   rr(c, x, y, w, h, 3, th.display);
@@ -199,31 +242,60 @@ function waveScroll(c, th, x, y, w, h, hist, key, color) {
   for (let i = n - 1; i >= 0; i--) c.lineTo(x + w - i, mid + hist[hist.length - 1 - i][key] * h * 0.46 * (0.7 + 0.3 * Math.abs(noise(i))));
   c.fill(); c.restore();
 }
+// Decay display. With real measurements (st.envHist: output RMS dB at ~30 Hz, newest last) it
+// draws the last 3 s of output level and estimates the decay time as 3 x the time the level
+// takes to fall 20 dB after its loudest point; otherwise it draws a simulated tail.
 function decayMap(c, th, x, y, w, h, st) {
   rr(c, x, y, w, h, 3, th.display);
-  const t60 = 1.9;
   c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
   c.strokeStyle = th.dline; c.lineWidth = 1;
   for (let i = 1; i < 4; i++) { const yy = y + 14 + (h - 30) * i / 4; c.beginPath(); c.moveTo(x, yy); c.lineTo(x + w, yy); c.stroke(); }
-  // envelope after the last hit: early reflections then exponential tail
-  const ph = (st.t % 1) / 1;
   c.fillStyle = th.cyan + "44"; c.strokeStyle = th.cyan; c.lineWidth = 1.5; c.beginPath();
   c.moveTo(x + 6, y + h - 14);
-  for (let i = 0; i <= w - 12; i++) {
-    const tt = (i / (w - 12)) * 3;
-    let e = Math.exp(-tt * 6.9 / t60);
-    if (tt < 0.08) e *= tt / 0.08;
-    const er = tt < 0.12 ? 0.25 * Math.abs(noise(i * 3)) : 0;
-    c.lineTo(x + 6 + i, y + h - 14 - (h - 30) * Math.min(1, e + er));
+  let label;
+  if (st.envHist && st.envHist.length > 2) {
+    const e = st.envHist, n = e.length, span = 90;
+    const fy = d => y + h - 14 - (h - 30) * Math.max(0, Math.min(1, 1 + d / 60));
+    for (let i = 0; i < n; i++) c.lineTo(x + 6 + (w - 12) * (i + span - n) / (span - 1), fy(e[i]));
+    c.lineTo(x + w - 6, y + h - 14); c.fill(); c.stroke();
+    let pk = 0;
+    for (let i = 1; i < n; i++) if (e[i] > e[pk]) pk = i;
+    let k = pk;
+    while (k < n && e[k] > e[pk] - 20) k++;
+    label = k < n ? `≈ ${(3 * (k - pk) / 30).toFixed(2)} s` : "> 3 s";
+  } else {
+    const t60 = 1.9;
+    for (let i = 0; i <= w - 12; i++) {
+      const tt = (i / (w - 12)) * 3;
+      let e = Math.exp(-tt * 6.9 / t60);
+      if (tt < 0.08) e *= tt / 0.08;
+      const er = tt < 0.12 ? 0.25 * Math.abs(noise(i * 3)) : 0;
+      c.lineTo(x + 6 + i, y + h - 14 - (h - 30) * Math.min(1, e + er));
+    }
+    c.lineTo(x + w - 6, y + h - 14); c.fill(); c.stroke();
+    const px = x + 6 + (w - 12) * ((st.t % 1) / 1);
+    c.strokeStyle = th.orange; c.beginPath(); c.moveTo(px, y + 14); c.lineTo(px, y + h - 14); c.stroke();
+    label = `≈ ${t60.toFixed(2)} s`;
   }
-  c.lineTo(x + w - 6, y + h - 14); c.fill(); c.stroke();
-  const px = x + 6 + (w - 12) * ph;
-  c.strokeStyle = th.orange; c.beginPath(); c.moveTo(px, y + 14); c.lineTo(px, y + h - 14); c.stroke();
   c.restore();
   txt(c, x + 6, y + 11, "Decay", { color: th.scale, align: "left" });
-  txt(c, x + w - 6, y + 11, `≈ ${t60.toFixed(2)} s`, { color: th.orange, align: "right" });
-  ["0", "1 s", "2 s", "3 s"].forEach((s, i) => txt(c, x + 6 + (w - 12) * i / 3, y + h - 3, s, { color: th.scale, size: 8.5, align: i ? (i === 3 ? "right" : "center") : "left" }));
+  txt(c, x + w - 6, y + 11, label, { color: th.orange, align: "right" });
+  const ticks = st.envHist ? ["-3 s", "-2 s", "-1 s", "now"] : ["0", "1 s", "2 s", "3 s"];
+  ticks.forEach((s, i) => txt(c, x + 6 + (w - 12) * i / 3, y + h - 3, s, { color: th.scale, size: 8.5, align: i ? (i === 3 ? "right" : "center") : "left" }));
 }
+// Word-wrapped text block (e.g. the effect description) inside width w, at most maxLines.
+function wrapText(c, x, y, w, text, o = {}) {
+  c.font = `400 ${o.size || 9.5}px ${FONT}`;
+  const words = String(text || "").split(/\s+/).filter(Boolean), lines = [];
+  let line = "";
+  for (const wd of words) {
+    const t = line ? line + " " + wd : wd;
+    if (c.measureText(t).width > w && line) { lines.push(line); line = wd; } else line = t;
+  }
+  if (line) lines.push(line);
+  lines.slice(0, o.maxLines || 6).forEach((l, i) => txt(c, x, y + i * (o.lh || 12), l, { color: o.color, align: "left", size: o.size }));
+}
+
 // Standard Input / Output gain strip, required on every device (user decision 2026-10-23).
 // Two dB dials (Input above, Output below) and a stereo In / Out meter pair. Width GAIN_W.
 const GAIN_W = 64;
@@ -579,6 +651,52 @@ function makeCanvas(mg, opts) {
     core(st, st.t, dt);
   }
 
+
+  // ---- real measurements -> the same state fields core() fills (see lib.js "real measurements")
+  const fin = (v, d) => (Number.isFinite(v) ? v : d);
+  function stLive(st, m, dt) {
+    if (!st.st) st.st = { n: 0, pts: [], h: [], lv: {}, pk: {}, cI: 1, cO: 1, wI: 0, wO: 0, bI: 0, bO: 0, ag: 1, sp: 0.3 };
+    const s = st.st, ms = m.ms || [], rl = db_ => Math.pow(10, clamp(fin(db_, -120), -120, 6) / 20);
+    const pkIn = m.inPkDb || [-120, -120], pkOut = m.outPkDb || [-120, -120];
+    // level meters: fast attack, 24 dB/s release; thin line holds the peak (9 dB/s)
+    const lev = { Li: pkIn[0], Ri: pkIn[1], Lo: pkOut[0], Ro: pkOut[1], Mi: ms[0], Si: ms[1], Mo: ms[2], So: ms[3] };
+    for (const k in lev) {
+      const v = clamp(fin(lev[k], -120), -120, 6), o = s.lv[k] === undefined ? -120 : s.lv[k];
+      s.lv[k] = Math.max(v, o - 24 * dt);
+      s.pk[k] = Math.max(s.lv[k], (s.pk[k] === undefined ? -120 : s.pk[k]) - 9 * dt);
+    }
+    st.inL = Math.max(st.inL === undefined ? -120 : st.inL - 24 * dt, Math.max(pkIn[0], pkIn[1]));
+    st.outL = Math.max(st.outL === undefined ? -120 : st.outL - 24 * dt, Math.max(pkOut[0], pkOut[1]));
+    // vectorscope: 12 samples of the 64-sample scopes per frame, mid up / side across. One common
+    // gain (1x..4x, slow) keeps quiet passages visible; input and output share it.
+    const iL = m.inScopeL || [], iR = m.inScopeR || [], oL = m.scopeL || [], oR = m.scopeR || [];
+    let pk = 0;
+    for (let i = 0; i < 64; i++) pk = Math.max(pk, Math.abs(fin(iL[i], 0)), Math.abs(fin(iR[i], 0)), Math.abs(fin(oL[i], 0)), Math.abs(fin(oR[i], 0)));
+    s.sp = Math.max(pk, s.sp - 0.5 * dt);
+    s.ag += (clamp(0.7 / Math.max(0.05, s.sp), 1, 4) - s.ag) * 0.1;
+    const g = s.ag;
+    const n = Math.min(iL.length, iR.length, oL.length, oR.length);
+    for (let j = 0; j < 12 && n > 0; j++) {
+      const i = Math.min(n - 1, Math.floor(j * n / 12 + 2));
+      s.pts.push({ xi: (iL[i] - iR[i]) * S2 * g, yi: (iL[i] + iR[i]) * S2 * g, xo: (oL[i] - oR[i]) * S2 * g, yo: (oL[i] + oR[i]) * S2 * g });
+    }
+    while (s.pts.length > 260) s.pts.shift();
+    // correlation from mid/side power, width = side / mid amplitude, balance from channel peaks
+    const corr = (M, Sd, old) => {
+      if (!Number.isFinite(M) || !Number.isFinite(Sd) || M < -100) return old;
+      const pm = Math.pow(10, M / 10), ps = Math.pow(10, Sd / 10);
+      return (pm - ps) / (pm + ps);
+    };
+    const wid = (M, Sd, old) => (!Number.isFinite(M) || !Number.isFinite(Sd) || M < -100) ? old : clamp(Math.pow(10, (Sd - M) / 20), 0, 2);
+    const bal = (a, b, old) => (Math.max(a, b) < -90 ? old : clamp((rl(b) - rl(a)) / (rl(a) + rl(b)), -1, 1));
+    const sm = (o, v, a) => o + (v - o) * a;
+    s.cI = sm(s.cI, corr(ms[0], ms[1], s.cI), 0.3); s.cO = sm(s.cO, corr(ms[2], ms[3], s.cO), 0.3);
+    s.wI = sm(s.wI, wid(ms[0], ms[1], s.wI), 0.3); s.wO = sm(s.wO, wid(ms[2], ms[3], s.wO), 0.3);
+    s.bI = sm(s.bI, bal(pkIn[0], pkIn[1], s.bI), 0.25); s.bO = sm(s.bO, bal(pkOut[0], pkOut[1], s.bO), 0.25);
+    s.h.push({ bI: s.bI, bO: s.bO, cI: s.cI, cO: s.cO, wI: s.wI, wO: s.wO });
+    if (s.h.length > 700) s.h.shift();
+  }
+
   // dials in a panel; "No controls" note when the effect has none
   function ctl(c, th, ps, vals, a) {
     rr(c, a.x, a.y, a.w, a.h, 3, th.panel);
@@ -642,6 +760,7 @@ function makeCanvas(mg, opts) {
     txt(c, x + 6, y + 11, "L", { color: th.scale, size: 9, align: "left" });
     txt(c, x + w - 6, y + 11, "R", { color: th.scale, size: 9, align: "right" });
     txt(c, cx, y + h - 4, "S", { color: th.scale, size: 9 });
+    if (s.ag > 1.05) txt(c, cx + 14, y + h - 4, "×" + s.ag.toFixed(1), { color: th.scale, size: 8.5, align: "left" });
     txt(c, x + 6, y + h - 5, "Out", { color: th.cyan, size: 9.5, align: "left", bold: true });
     txt(c, x + w - 6, y + h - 5, "In", { color: th.dispText, size: 9.5, align: "right", bold: true });
   }
@@ -654,7 +773,7 @@ function makeCanvas(mg, opts) {
     refs: [["UtilityL12.png", "Utility"], ["ChannelEQL12.png", "Channel EQ"], ["EchoL12.png", "Echo"]],
     lead: "Visual cue: the stereo image, measured live from the left and right channels of input and output: vectorscope, correlation, width and balance. Every option has the Input / Output gain strip on the right.",
     options: [
-      { id: "A", name: "Vectorscope", width: 588, step,
+      { id: "A", name: "Vectorscope", width: 588, step, live: stLive,
         why: "A round vectorscope shows where the sound sits in the stereo field, with correlation, width and balance bars at the side — like the displays in Utility and Live's spectrum tools.",
         bullets: ["Driven by: L and R samples of input and output, plotted as mid (up) against side (across)", "Correlation, width and balance bars for input and output; the orange zone marks out-of-phase risk", "Menu and arrows top-left, dials below (0 to 6 handled); Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
@@ -691,7 +810,7 @@ function makeCanvas(mg, opts) {
           hbar(c, th, x + 8, y + 145, w - 16, 6, s.bO, th.orange, true);
           gainStrip(c, th, 588 - GAIN_W - 4, st);
         } },
-      { id: "B", name: "Mid/Side meters", width: 548, step,
+      { id: "B", name: "Mid/Side meters", width: 548, step, live: stLive,
         why: "Eight level meters — left, right, mid and side — for input and output, so you see what the effect adds or removes at a glance, like Utility's Mid/Side and Width view.",
         bullets: ["Driven by: peak level of L, R, mid (L+R) and side (L-R), before and after; thin lines hold the peak", "Width and balance readouts next to the menu", "Dials in one block on the right; Input / Output gain strip at the far right"],
         draw(c, th, st, ps, vals) {
@@ -723,7 +842,7 @@ function makeCanvas(mg, opts) {
           ctl(c, th, ps, vals, { x: 316, y: Y0, w: 160, h: FH });
           gainStrip(c, th, 548 - GAIN_W - 4, st);
         } },
-      { id: "C", name: "Field history", width: 648, step,
+      { id: "C", name: "Field history", width: 648, step, live: stLive,
         why: "A scrolling picture of balance and correlation over time, input in grey and output in colour — like the scrolling display in Echo and Compressor.",
         bullets: ["Driven by: left/right level balance and L/R correlation, measured every block", "Top lane: balance (left to right); bottom lane: correlation (-1 to +1) with an orange mono-risk zone", "Dials in one row under the display; Input / Output gain strip on the right"],
         draw(c, th, st, ps, vals) {
@@ -786,6 +905,16 @@ S.themes = {"dark": {"ControlForeground": "#b5b5b5", "TextDisabled": "#757575", 
 S.theme = "dark";
 S.cat = CATEGORY;
 
+const LOG = "";
+function log() {
+  if (!LOG) return;
+  const f = new File(LOG, "write");
+  if (!f.isopen) return;
+  f.position = f.eof;
+  f.writeline(CATEGORY + ": " + arrayfromargs(arguments).join(" "));
+  f.close();
+}
+
 const DES = DESIGNS[CATEGORY];
 const OPT = DES.options.find(o => o.id === OPTION) || DES.options[0];
 
@@ -793,17 +922,21 @@ let st = newState();
 let params = [];
 let rec = [];
 let lastLayout = "";
+let sentBack = false;
 let lastT = Date.now();
 
 // ---------------------------------------------------------------- measurements from airwin~
 const M = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 1,
-            inPk: 0, outPk: 0, specIn: [], specOut: [], xfer: [], scopeL: [], scopeR: [] };
+            inPk: 0, outPk: 0, specIn: [], specOut: [], specDiff: [], xfer: [], scopeL: [], scopeR: [],
+            inScopeL: [], inScopeR: [], ms: [-120, -120, -120, -120], diffRmsDb: -120, dcOut: 0, xcorr: [] };
 
 function levels(a, b, c, d, e, f, g, h) {
   M.inPkDb = [a, b]; M.outPkDb = [c, d]; M.inRmsDb = e; M.outRmsDb = f; M.gainDb = g; M.corr = h;
 }
+let frames = 0;
 function peaks(i, o) {
   M.inPk = i; M.outPk = o;
+  if (LOG && frames++ % 30 === 0) log("frame", frames, "in", M.inPkDb[0].toFixed(1), "out", M.outPkDb[0].toFixed(1), "gain", M.gainDb.toFixed(2));
   // "peaks" is the last message of each frame: advance the display state and repaint
   const now = Date.now(), dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
   st.t += dt;
@@ -814,6 +947,11 @@ function spec_in() { M.specIn = arrayfromargs(arguments); }
 function spec_out() { M.specOut = arrayfromargs(arguments); }
 function xfer() { M.xfer = arrayfromargs(arguments); }
 function scope() { const a = arrayfromargs(arguments); M.scopeL = a.slice(0, 64); M.scopeR = a.slice(64); }
+function scope_in() { const a = arrayfromargs(arguments); M.inScopeL = a.slice(0, 64); M.inScopeR = a.slice(64); }
+function spec_diff() { M.specDiff = arrayfromargs(arguments); }
+function ms(a, b, c, d) { M.ms = [a, b, c, d]; }
+function diff(r, dc) { M.diffRmsDb = r; M.dcOut = dc; }
+function xcorr() { M.xcorr = arrayfromargs(arguments); }
 
 // effect info
 function nparams(n) { params = []; for (let i = 0; i < n; i++) params.push({ name: "", display: "", default: 0.5, _i: i }); lastLayout = ""; mgraphics.redraw(); }
@@ -821,7 +959,8 @@ function pname(i, s) { if (params[i]) params[i].name = String(s); }
 function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments).slice(1).join(" "); }
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
-function anything() {} // what, category, pvalue, …: not needed for drawing
+function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
+function anything() {} // category, pvalue, …: not needed for drawing
 
 // ---------------------------------------------------------------- controls are Live objects
 knob = function (c, th, x, y, w, p, v, big) {
@@ -837,12 +976,13 @@ viewTabs = function (c, th, x, y, labels, active) {
   return [];
 };
 
-function script() { outlet(0, ["script"].concat(arrayfromargs(arguments))); }
+function script() { const a = arrayfromargs(arguments); log("script", a.join(" ")); outlet(0, ["script"].concat(a)); }
 function rect(id, x, y, w, h) { script("sendbox", id, "presentation_rect", Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
 
 function publishLayout() {
   const key = JSON.stringify(rec.map(r => [r.k, r.i, Math.round(r.x), Math.round(r.y), Math.round(r.w || 0), r.big, r.name]));
   if (key === lastLayout) return;
+  if (!lastLayout && !sentBack) { script("sendtoback", "display"); sentBack = true; } // behind Live's controls
   lastLayout = key;
   const shown = {};
   let gains = 0, tabs = [];
@@ -882,18 +1022,10 @@ function paint() {
     OPT.draw(c, th, st, params, params.map(() => 0.5));
   } catch (e) {
     post("aw_ui draw error: " + e + "\n");
+    log("draw error", e, e && e.stack);
   }
   publishLayout();
 }
 
-// Generic mapping for designs without their own live(): level, gain change and history.
-function liveGeneric(st, m, dt) {
-  const inDb = Math.max(m.inPkDb[0], m.inPkDb[1]), outDb = Math.max(m.outPkDb[0], m.outPkDb[1]);
-  st.inL = Math.max(inDb, (st.inL === undefined ? -60 : st.inL) - 24 * dt);
-  st.outL = Math.max(outDb, (st.outL === undefined ? -60 : st.outL) - 24 * dt);
-  const grNow = Math.max(0, -m.gainDb);
-  st.gr = (st.gr || 0) + (grNow - (st.gr || 0)) * (grNow > (st.gr || 0) ? 0.6 : 0.15);
-  st.hist = st.hist || [];
-  st.hist.push({ inA: m.inPk, out: outDb, gr: st.gr, dry: m.inPk, wet: m.outPk });
-  if (st.hist.length > 800) st.hist.shift();
-}
+// live.colors answers "live_control_bg r g b a": a light control background means a light theme
+function live_control_bg(r, g, b) { theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

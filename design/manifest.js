@@ -30,6 +30,6 @@ for (const f of fs.readdirSync(path.join(D, "designs")).filter(f => f.endsWith("
   const ps = eff.params.map((p, i) => ({ ...p, _i: i }));
   o.draw(fake, vm.runInContext("tok()", ctx), st, ps, ps.map(p => p.default));
   ctx.__real = realTabs; vm.runInContext("viewTabs = __real;", ctx);
-  out[cat] = { option: o.id, width: o.width, tabs };
+  out[cat] = { option: o.id, width: o.width, tabs, effect: des.effect };
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");

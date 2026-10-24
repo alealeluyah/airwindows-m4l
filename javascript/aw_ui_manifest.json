@@ -1,50 +1,60 @@
 {
  "Ambience": {
+  "effect": "TapeDelay",
   "option": "A",
   "tabs": [],
   "width": 608
  },
  "Amp Sims": {
+  "effect": "ChimeyGuitar",
   "option": "A",
   "tabs": [],
   "width": 700
  },
  "Bass": {
+  "effect": "DubCenter",
   "option": "A",
   "tabs": [],
   "width": 668
  },
  "Biquads": {
+  "effect": "BiquadNonLin",
   "option": "A",
   "tabs": [],
   "width": 528
  },
  "Brightness": {
+  "effect": "Air",
   "option": "A",
   "tabs": [],
   "width": 668
  },
  "Clipping": {
+  "effect": "ADClip9",
   "option": "A",
   "tabs": [],
   "width": 548
  },
  "Consoles": {
+  "effect": "ConsoleMCChannel",
   "option": "A",
   "tabs": [],
   "width": 592
  },
  "Distortion": {
+  "effect": "Dirt",
   "option": "A",
   "tabs": [],
   "width": 548
  },
  "Dithers": {
+  "effect": "BuildATPDF",
   "option": "A",
   "tabs": [],
   "width": 668
  },
  "Dynamics": {
+  "effect": "Pressure5",
   "option": "AB",
   "tabs": [
    "Needle",
@@ -53,66 +63,79 @@
   "width": 556
  },
  "Effects": {
+  "effect": "Energy",
   "option": "A",
   "tabs": [],
   "width": 688
  },
  "Filter": {
+  "effect": "BezEQ3",
   "option": "A",
   "tabs": [],
   "width": 668
  },
  "Lo-Fi": {
+  "effect": "DeRez5",
   "option": "A",
   "tabs": [],
   "width": 700
  },
  "Noise": {
+  "effect": "Noise",
   "option": "A",
   "tabs": [],
   "width": 588
  },
  "Reverb": {
+  "effect": "Galactic3",
   "option": "A",
   "tabs": [],
   "width": 636
  },
  "Saturation": {
+  "effect": "Desk4",
   "option": "A",
   "tabs": [],
   "width": 498
  },
  "Stereo": {
+  "effect": "Srsly3",
   "option": "A",
   "tabs": [],
   "width": 588
  },
  "Subtlety": {
+  "effect": "Mastering2",
   "option": "A",
   "tabs": [],
   "width": 638
  },
  "Tape": {
+  "effect": "ToTape6",
   "option": "A",
   "tabs": [],
   "width": 608
  },
  "Tone Color": {
+  "effect": "Luxor",
   "option": "A",
   "tabs": [],
   "width": 450
  },
  "Unclassified": {
+  "effect": "CStrip",
   "option": "A",
   "tabs": [],
   "width": 700
  },
  "Utility": {
+  "effect": "EveryTrim",
   "option": "A",
   "tabs": [],
   "width": 628
  },
  "XYZ Filters": {
+  "effect": "YBandpass",
   "option": "A",
   "tabs": [],
   "width": 568

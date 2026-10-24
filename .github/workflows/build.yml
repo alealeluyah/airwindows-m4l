@@ -31,8 +31,9 @@ jobs:
           python3 tools/gen_devices.py registry.json devices
       - name: Package
         run: |
-          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices
+          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices dist/airwindows-m4l/javascript
           cp -R externals/airwin~.mxo dist/airwindows-m4l/externals/
+          cp javascript/*.js javascript/*.json dist/airwindows-m4l/javascript/
           cp devices/*.amxd dist/airwindows-m4l/devices/
           cp README.md LICENSE package-info.json dist/airwindows-m4l/
           cd dist && zip -qr ../airwindows-m4l-macos.zip airwindows-m4l
@@ -70,8 +71,9 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices
+          mkdir -p dist/airwindows-m4l/externals dist/airwindows-m4l/devices dist/airwindows-m4l/javascript
           cp externals/airwin~.mxe64 dist/airwindows-m4l/externals/
+          cp javascript/*.js javascript/*.json dist/airwindows-m4l/javascript/
           cp devices/*.amxd dist/airwindows-m4l/devices/
           cp README.md LICENSE package-info.json dist/airwindows-m4l/
           cd dist && 7z a -tzip ../airwindows-m4l-windows.zip airwindows-m4l

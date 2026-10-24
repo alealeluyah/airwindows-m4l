@@ -45,7 +45,8 @@ let lastT = Date.now();
 
 // ---------------------------------------------------------------- measurements from airwin~
 const M = { inPkDb: [-120, -120], outPkDb: [-120, -120], inRmsDb: -120, outRmsDb: -120, gainDb: 0, corr: 1,
-            inPk: 0, outPk: 0, specIn: [], specOut: [], xfer: [], scopeL: [], scopeR: [] };
+            inPk: 0, outPk: 0, specIn: [], specOut: [], specDiff: [], xfer: [], scopeL: [], scopeR: [],
+            inScopeL: [], inScopeR: [], ms: [-120, -120, -120, -120], diffRmsDb: -120, dcOut: 0, xcorr: [] };
 
 function levels(a, b, c, d, e, f, g, h) {
   M.inPkDb = [a, b]; M.outPkDb = [c, d]; M.inRmsDb = e; M.outRmsDb = f; M.gainDb = g; M.corr = h;
@@ -64,6 +65,11 @@ function spec_in() { M.specIn = arrayfromargs(arguments); }
 function spec_out() { M.specOut = arrayfromargs(arguments); }
 function xfer() { M.xfer = arrayfromargs(arguments); }
 function scope() { const a = arrayfromargs(arguments); M.scopeL = a.slice(0, 64); M.scopeR = a.slice(64); }
+function scope_in() { const a = arrayfromargs(arguments); M.inScopeL = a.slice(0, 64); M.inScopeR = a.slice(64); }
+function spec_diff() { M.specDiff = arrayfromargs(arguments); }
+function ms(a, b, c, d) { M.ms = [a, b, c, d]; }
+function diff(r, dc) { M.diffRmsDb = r; M.dcOut = dc; }
+function xcorr() { M.xcorr = arrayfromargs(arguments); }
 
 // effect info
 function nparams(n) { params = []; for (let i = 0; i < n; i++) params.push({ name: "", display: "", default: 0.5, _i: i }); lastLayout = ""; mgraphics.redraw(); }
@@ -71,7 +77,8 @@ function pname(i, s) { if (params[i]) params[i].name = String(s); }
 function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments).slice(1).join(" "); }
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
-function anything() {} // what, category, pvalue, …: not needed for drawing
+function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
+function anything() {} // category, pvalue, …: not needed for drawing
 
 // ---------------------------------------------------------------- controls are Live objects
 knob = function (c, th, x, y, w, p, v, big) {
@@ -136,18 +143,6 @@ function paint() {
     log("draw error", e, e && e.stack);
   }
   publishLayout();
-}
-
-// Generic mapping for designs without their own live(): level, gain change and history.
-function liveGeneric(st, m, dt) {
-  const inDb = Math.max(m.inPkDb[0], m.inPkDb[1]), outDb = Math.max(m.outPkDb[0], m.outPkDb[1]);
-  st.inL = Math.max(inDb, (st.inL === undefined ? -60 : st.inL) - 24 * dt);
-  st.outL = Math.max(outDb, (st.outL === undefined ? -60 : st.outL) - 24 * dt);
-  const grNow = Math.max(0, -m.gainDb);
-  st.gr = (st.gr || 0) + (grNow - (st.gr || 0)) * (grNow > (st.gr || 0) ? 0.6 : 0.15);
-  st.hist = st.hist || [];
-  st.hist.push({ inA: m.inPk, out: outDb, gr: st.gr, dry: m.inPk, wet: m.outPk });
-  if (st.hist.length > 800) st.hist.shift();
 }
 
 // live.colors answers "live_control_bg r g b a": a light control background means a light theme

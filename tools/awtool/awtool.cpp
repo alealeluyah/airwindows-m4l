@@ -4,6 +4,9 @@
 //   awtool check [sr] [name]    run each effect on test audio; report non-finite output,
 //                               silence and CPU cost (exit code 1 when any effect fails)
 //   awtool analysis             self-test of the display measurements (aw_analysis.h)
+//   awtool frames <name> [sec] [param=value ...]
+//                               run an effect on a synthesized stereo drum loop and print the
+//                               display frames airwin~ would send (JSON, 30 per second)
 
 #include "aw_analysis.h"
 #include "aw_registry.h"
@@ -170,6 +173,9 @@ static int analysis_test()
     expect("input RMS (dBFS, sine = peak - 3.01)", d.inRmsDb, -9.1, -8.9);
     expect("gain change out-in (dB)", d.gainDb, -6.1, -5.9);
     expect("correlation, identical L/R", d.corr, 0.999, 1.001);
+    expect("side level, identical L/R (dBFS)", d.ms[1], -120, -120);
+    expect("output mid level (dBFS, sine at -12 = RMS -15.05)", d.ms[2], -15.2, -14.9);
+    expect("difference RMS (out-in = -in/2: -15.05 dBFS)", d.diffRmsDb, -15.3, -14.8);
     int best = 0;
     for (int b = 1; b < aw::kBands; ++b)
         if (d.specIn[b] > d.specIn[best])
@@ -183,6 +189,25 @@ static int analysis_test()
     int bin = (int)((0.47 + 1.0) * 0.5 * aw::kXferBins);
     expect("transfer bin follows out = in/2", d.xfer[bin] / ((bin + 0.5) / aw::kXferBins * 2 - 1), 0.4, 0.6);
 
+    // output = input delayed by 480 samples (10 ms): cross-correlation peaks in that lag bin
+    {
+        std::vector<double> past(4096, 0.0);
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<double> u(-0.5, 0.5);
+        run([&](long t, double &il, double &ir, double &ol, double &orr) {
+            double x = u(rng);
+            past[t % 4096] = x;
+            il = ir = x;
+            ol = orr = t >= 480 ? past[(t - 480) % 4096] : 0.0;
+        }, d);
+        int bestLag = 0;
+        for (int b = 1; b < 64; ++b)
+            if (d.xcorr[b] > d.xcorr[bestLag])
+                bestLag = b;
+        expect("cross-correlation peak bin (480 / 32 = 15)", bestLag, 15, 15);
+        expect("cross-correlation peak value", d.xcorr[bestLag], 0.7, 1.05);
+    }
+
     // opposite polarity L/R: correlation -1
     run([&](long t, double &il, double &ir, double &ol, double &orr) {
         double s = std::sin(2 * M_PI * 440.0 * t / sr);
@@ -191,6 +216,7 @@ static int analysis_test()
         orr = -s;
     }, d);
     expect("correlation, opposite L/R", d.corr, -1.001, -0.999);
+    expect("mid level, opposite L/R (dBFS)", d.ms[2], -120, -120);
 
     // silence: no gain change reported, correlation 1
     run([&](long, double &il, double &ir, double &ol, double &orr) { il = ir = ol = orr = 0; }, d);
@@ -201,6 +227,101 @@ static int analysis_test()
     return fails ? 1 : 0;
 }
 
+// Stereo drum loop at 120 bpm: kick (pitch-swept sine), snare (noise + tone), hats (bright
+// noise, panned differently left and right so the stereo image is not mono).
+static void drum_loop(long t, double sr, double &l, double &r)
+{
+    static uint32_t seed = 12345;
+    auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return ((seed >> 9) / 4194304.0) - 1.0; };
+    const double beat = 0.5, tt = t / sr, ph = std::fmod(tt, beat * 4);
+    double kt = std::fmod(tt, beat);
+    double kick = std::sin(2 * M_PI * (50 * kt + 70 * (1 - std::exp(-kt * 30)) / 30)) * std::exp(-kt * 9);
+    double snare = 0;
+    for (double s0 : {beat, beat * 3})
+        if (ph >= s0)
+        {
+            double st = ph - s0;
+            snare += (0.6 * rnd() + 0.4 * std::sin(2 * M_PI * 185 * st)) * std::exp(-st * 16);
+        }
+    double ht = std::fmod(tt, beat / 2);
+    static double hpL = 0, hpR = 0, lastN = 0;
+    double n = rnd(), hp = n - lastN;
+    lastN = n;
+    hpL = hp * std::exp(-ht * 45);
+    hpR = hp * std::exp(-std::fmod(tt + beat / 4, beat / 2) * 45);
+    l = 0.55 * kick + 0.35 * snare + 0.18 * hpL;
+    r = 0.55 * kick + 0.35 * snare + 0.18 * hpR;
+}
+
+static int frames(const char *name, double seconds, int nkv, char **kv)
+{
+    aw::ensureRegistry();
+    int idx = aw::indexOf(name);
+    if (idx < 0)
+    {
+        fprintf(stderr, "unknown effect %s\n", name);
+        return 2;
+    }
+    const double sr = 48000.0;
+    auto fx = AirwinRegistry::registry[idx].generator();
+    fx->setSampleRate((float)sr);
+    for (int i = 0; i < nkv; ++i)
+    {
+        int pi = -1;
+        float v = 0;
+        if (sscanf(kv[i], "%d=%f", &pi, &v) == 2 && pi >= 0 && pi < AirwinRegistry::registry[idx].nParams)
+            fx->setParameter(pi, v);
+    }
+    aw::Collector col;
+    col.setHop((long)(sr / 30));
+    aw::Display d{};
+    const int B = 256;
+    std::vector<double> il(B), ir(B), ol(B), orr(B);
+    long t = 0, total = (long)(seconds * sr);
+    bool first = true;
+    auto arr = [](const float *v, int n) {
+        for (int i = 0; i < n; ++i)
+            printf(i ? ",%.4g" : "%.4g", std::isfinite(v[i]) ? v[i] : -9.0);
+    };
+    printf("{\"effect\":\"%s\",\"sr\":%g,\"frames\":[\n", name, sr);
+    while (t < total)
+    {
+        for (int i = 0; i < B; ++i, ++t)
+            drum_loop(t, sr, il[i], ir[i]);
+        double *in2[2] = {il.data(), ir.data()}, *out2[2] = {ol.data(), orr.data()};
+        fx->processDoubleReplacing(in2, out2, B);
+        col.push(il.data(), ir.data(), ol.data(), orr.data(), B);
+        if (const aw::Frame *f = col.latest())
+        {
+            aw::analyze(*f, sr, d);
+            float lv[8] = {d.inPkDb[0], d.inPkDb[1], d.outPkDb[0], d.outPkDb[1], d.inRmsDb, d.outRmsDb, d.gainDb, d.corr};
+            float pk[2] = {d.inPk, d.outPk};
+            float sc[128];
+            std::copy(d.scopeL, d.scopeL + 64, sc);
+            std::copy(d.scopeR, d.scopeR + 64, sc + 64);
+            printf(first ? "{" : ",\n{");
+            first = false;
+            printf("\"levels\":["); arr(lv, 8);
+            printf("],\"peaks\":["); arr(pk, 2);
+            printf("],\"spec_in\":["); arr(d.specIn, aw::kBands);
+            printf("],\"spec_out\":["); arr(d.specOut, aw::kBands);
+            printf("],\"xfer\":["); arr(d.xfer, aw::kXferBins);
+            printf("],\"scope\":["); arr(sc, 128);
+            std::copy(d.inScopeL, d.inScopeL + 64, sc);
+            std::copy(d.inScopeR, d.inScopeR + 64, sc + 64);
+            printf("],\"scope_in\":["); arr(sc, 128);
+            printf("],\"ms\":["); arr(d.ms, 4);
+            printf("],\"spec_diff\":["); arr(d.specDiff, aw::kBands);
+            float df[2] = {d.diffRmsDb, d.dcOut};
+            printf("],\"diff\":["); arr(df, 2);
+            printf("],\"xcorr\":["); arr(d.xcorr, 64);
+            printf("]}");
+        }
+    }
+    printf("\n]}\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc >= 2 && !strcmp(argv[1], "dump"))
@@ -209,6 +330,8 @@ int main(int argc, char **argv)
         return check(argc >= 3 ? (float)atof(argv[2]) : 48000.f, argc >= 4 ? argv[3] : nullptr);
     if (argc >= 2 && !strcmp(argv[1], "analysis"))
         return analysis_test();
-    fprintf(stderr, "usage: awtool dump | check [samplerate] [name] | analysis\n");
+    if (argc >= 3 && !strcmp(argv[1], "frames"))
+        return frames(argv[2], argc >= 4 ? atof(argv[3]) : 6.0, argc > 4 ? argc - 4 : 0, argv + 4);
+    fprintf(stderr, "usage: awtool dump | check [samplerate] [name] | analysis | frames <name> [sec] [i=v ...]\n");
     return 2;
 }

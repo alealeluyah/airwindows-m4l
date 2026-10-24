@@ -30,11 +30,14 @@ struct Frame
     float inPk[2], outPk[2];   // max |x|
     double inSq[2], outSq[2];  // sum of squares
     double lr, ll, rr;         // output cross terms
+    double midSq[2], sideSq[2]; // sum of squares of (L+R)/2 and (L-R)/2: [0] input, [1] output
+    double outSum;             // sum of the output mono signal (DC offset)
     double xferSum[kXferBins];
     int xferN[kXferBins];
     long n;                    // samples in this frame
     float histIn[kHist], histOut[kHist]; // chronological
     float scopeL[kScope], scopeR[kScope];
+    float inScopeL[kScope], inScopeR[kScope];
     unsigned seq;
 };
 
@@ -60,6 +63,11 @@ class Collector
             f.inSq[1] += ir * ir;
             f.outSq[0] += ol * ol;
             f.outSq[1] += orr * orr;
+            f.midSq[0] += 0.25f * (il + ir) * (il + ir);
+            f.sideSq[0] += 0.25f * (il - ir) * (il - ir);
+            f.midSq[1] += 0.25f * (ol + orr) * (ol + orr);
+            f.sideSq[1] += 0.25f * (ol - orr) * (ol - orr);
+            f.outSum += 0.5f * (ol + orr);
             f.lr += ol * orr;
             f.ll += ol * ol;
             f.rr += orr * orr;
@@ -71,6 +79,8 @@ class Collector
             ringOut_[pos_] = mo;
             scL_[spos_] = ol;
             scR_[spos_] = orr;
+            siL_[spos_] = il;
+            siR_[spos_] = ir;
             pos_ = (pos_ + 1) % kHist;
             spos_ = (spos_ + 1) % kScope;
             if (++f.n >= hop_.load(std::memory_order_relaxed))
@@ -101,6 +111,8 @@ class Collector
         std::fill(std::begin(ringOut_), std::end(ringOut_), 0.f);
         std::fill(std::begin(scL_), std::end(scL_), 0.f);
         std::fill(std::begin(scR_), std::end(scR_), 0.f);
+        std::fill(std::begin(siL_), std::end(siL_), 0.f);
+        std::fill(std::begin(siR_), std::end(siR_), 0.f);
     }
 
   private:
@@ -111,6 +123,7 @@ class Collector
         f.inPk[0] = f.inPk[1] = f.outPk[0] = f.outPk[1] = 0.f;
         f.inSq[0] = f.inSq[1] = f.outSq[0] = f.outSq[1] = 0.0;
         f.lr = f.ll = f.rr = 0.0;
+        f.midSq[0] = f.midSq[1] = f.sideSq[0] = f.sideSq[1] = f.outSum = 0.0;
         std::fill(std::begin(f.xferSum), std::end(f.xferSum), 0.0);
         std::fill(std::begin(f.xferN), std::end(f.xferN), 0);
         f.n = 0;
@@ -128,6 +141,8 @@ class Collector
         {
             f.scopeL[i] = scL_[(spos_ + i) % kScope];
             f.scopeR[i] = scR_[(spos_ + i) % kScope];
+            f.inScopeL[i] = siL_[(spos_ + i) % kScope];
+            f.inScopeR[i] = siR_[(spos_ + i) % kScope];
         }
         f.seq = ++seq_;
         back_ = mid_.exchange(back_ | kDirty, std::memory_order_acq_rel) & ~kDirty;
@@ -140,7 +155,7 @@ class Collector
     std::atomic<long> hop_{1600};
     unsigned seq_{0};
     int pos_{0}, spos_{0};
-    float ringIn_[kHist], ringOut_[kHist], scL_[kScope], scR_[kScope];
+    float ringIn_[kHist], ringOut_[kHist], scL_[kScope], scR_[kScope], siL_[kScope], siR_[kScope];
 };
 
 // ---------------------------------------------------------------- UI-thread analysis
@@ -155,6 +170,13 @@ struct Display
     float specIn[kBands], specOut[kBands]; // dBFS per band
     float xfer[kXferBins];       // mean output per input bin, NAN where no samples
     float scopeL[64], scopeR[64];
+    float inScopeL[64], inScopeR[64];
+    float ms[4];                 // RMS dBFS: input mid, input side, output mid, output side
+    float specDiff[kBands];      // band levels of (output - input), dBFS
+    float diffRmsDb;             // RMS of (output - input) over the last kHist samples, dBFS
+    float dcOut;                 // mean of the output (linear)
+    float xcorr[64];             // |cross-correlation| of output vs input, lags 0..kHist-1 in 64 bins,
+                                 // normalised so a pure delay reads 1 at its lag
 };
 
 inline float toDb(double lin) { return lin > 1e-6 ? (float)(20.0 * std::log10(lin)) : -120.f; }
@@ -214,6 +236,34 @@ inline void spectrum(const float *x, double sr, float *bands)
     }
 }
 
+// |cross-correlation| of y against x for lags 0 .. kHist-1, max per bin of kHist/64 lags.
+inline void xcorr(const float *x, const float *y, float *out)
+{
+    const int N = 2 * kHist;
+    static thread_local std::vector<std::complex<double>> X(N), Y(N);
+    double ex = 0, ey = 0;
+    for (int i = 0; i < N; ++i)
+    {
+        X[i] = i < kHist ? x[i] : 0.f;
+        Y[i] = i < kHist ? y[i] : 0.f;
+        if (i < kHist) { ex += x[i] * x[i]; ey += y[i] * y[i]; }
+    }
+    fft(X);
+    fft(Y);
+    for (int i = 0; i < N; ++i)
+        Y[i] = std::conj(std::conj(Y[i]) * X[i]); // conj trick: ifft(z) = conj(fft(conj(z)))/N
+    fft(Y);
+    const double norm = (ex > 1e-12 && ey > 1e-12) ? 1.0 / (N * std::sqrt(ex * ey)) : 0.0;
+    const int per = kHist / 64;
+    for (int b = 0; b < 64; ++b)
+    {
+        double m = 0;
+        for (int k = b * per; k < (b + 1) * per; ++k)
+            m = std::max(m, std::abs(Y[(N - k) % N]) * norm);
+        out[b] = (float)m;
+    }
+}
+
 inline void analyze(const Frame &f, double sr, Display &d)
 {
     for (int c = 0; c < 2; ++c)
@@ -237,7 +287,24 @@ inline void analyze(const Frame &f, double sr, Display &d)
     {
         d.scopeL[i] = f.scopeL[i * (kScope / 64)];
         d.scopeR[i] = f.scopeR[i * (kScope / 64)];
+        d.inScopeL[i] = f.inScopeL[i * (kScope / 64)];
+        d.inScopeR[i] = f.inScopeR[i * (kScope / 64)];
     }
+    d.ms[0] = toDb(std::sqrt(f.midSq[0] / n));
+    d.ms[1] = toDb(std::sqrt(f.sideSq[0] / n));
+    d.ms[2] = toDb(std::sqrt(f.midSq[1] / n));
+    d.ms[3] = toDb(std::sqrt(f.sideSq[1] / n));
+    d.dcOut = (float)(f.outSum / n);
+    static thread_local std::vector<float> diff(kHist);
+    double dsq = 0;
+    for (int i = 0; i < kHist; ++i)
+    {
+        diff[i] = f.histOut[i] - f.histIn[i];
+        dsq += diff[i] * diff[i];
+    }
+    d.diffRmsDb = toDb(std::sqrt(dsq / kHist));
+    spectrum(diff.data(), sr, d.specDiff);
+    xcorr(f.histIn, f.histOut, d.xcorr);
 }
 
 } // namespace aw

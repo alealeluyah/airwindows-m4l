@@ -20,6 +20,12 @@
 //                        spec_in / spec_out <48> band levels in dBFS, 20 Hz .. 20 kHz, log-spaced
 //                        xfer <32>               mean output per input-amplitude bin (-9 = no data)
 //                        scope <64 L> <64 R>     recent output samples
+//                        scope_in <64 L> <64 R>  recent input samples
+//                        ms <inMid inSide outMid outSide>  RMS dBFS
+//                        spec_diff <48>          band levels of (output - input), dBFS
+//                        diff <rmsDb> <dc>       level of (output - input), output DC offset
+//                        xcorr <64>              |cross-correlation| out vs in, lags 0..2047 / 32
+//                        (peaks <in out> comes last in each frame)
 //
 // Effect swaps and parameter changes reach the audio thread lock-free.
 
@@ -354,15 +360,23 @@ static void airwin_meter_tick(t_airwin *x)
         aw::analyze(*f, im->sr, d);
         float lv[8] = {d.inPkDb[0], d.inPkDb[1], d.outPkDb[0], d.outPkDb[1], d.inRmsDb, d.outRmsDb, d.gainDb, d.corr};
         out_floats(x, "levels", lv, 8);
-        float pk[2] = {d.inPk, d.outPk};
-        out_floats(x, "peaks", pk, 2);
         out_floats(x, "spec_in", d.specIn, aw::kBands);
         out_floats(x, "spec_out", d.specOut, aw::kBands);
+        out_floats(x, "spec_diff", d.specDiff, aw::kBands);
         out_floats(x, "xfer", d.xfer, aw::kXferBins);
         float sc[128];
         std::copy(d.scopeL, d.scopeL + 64, sc);
         std::copy(d.scopeR, d.scopeR + 64, sc + 64);
         out_floats(x, "scope", sc, 128);
+        std::copy(d.inScopeL, d.inScopeL + 64, sc);
+        std::copy(d.inScopeR, d.inScopeR + 64, sc + 64);
+        out_floats(x, "scope_in", sc, 128);
+        out_floats(x, "ms", d.ms, 4);
+        float df[2] = {d.diffRmsDb, d.dcOut};
+        out_floats(x, "diff", df, 2);
+        out_floats(x, "xcorr", d.xcorr, 64);
+        float pk[2] = {d.inPk, d.outPk};
+        out_floats(x, "peaks", pk, 2); // last: the display redraws on this one
     }
     clock_fdelay(x->meterClock, 33.);
 }

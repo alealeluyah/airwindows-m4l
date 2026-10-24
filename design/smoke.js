@@ -78,6 +78,29 @@ for (const cat of cats) {
         }
       } catch (e) { problems.add(`${where()}: ${e.message}`); }
     }
+    // real measurements (frames/<Category>.json from `awtool frames`) through o.live or liveGeneric
+    const fpath = path.join(D, "frames", cat + ".json");
+    if (fs.existsSync(fpath)) {
+      if (!o.live) problems.add(`option ${o.id}: no live(st, m, dt) — real audio falls back to liveGeneric`);
+      const fr = JSON.parse(fs.readFileSync(fpath, "utf8")).frames;
+      for (const theme of ["dark", "light"]) {
+        let frame = 0;
+        const eff = effects.find(e => e.name === des.effect) || effects[0];
+        const where = () => `option ${o.id} [${theme}] real audio`;
+        const c = fakeCtx({ w: o.width, h: vm.runInContext("HEAD_H + DEVICE_H", ctx) }, problems, where);
+        try {
+          vm.runInContext("S.theme = th; S.cat = cat;", Object.assign(ctx, { th: theme, cat }));
+          const st = vm.runInContext("newState()", ctx);
+          const ps = eff.params.map((p, i) => ({ ...p, _i: i })), vals = ps.map(p => p.default);
+          const th = vm.runInContext("tok()", ctx), toM = vm.runInContext("measureFromFrame", ctx);
+          const live = o.live || vm.runInContext("liveGeneric", ctx);
+          for (frame = 0; frame < fr.length; frame++) {
+            st.t += 1 / 30; live(st, toM(fr[frame]), 1 / 30);
+            if (frame % 10 === 0) { vm.runInContext("header", ctx)(c, th, o.width, `Airwindows ${cat}`); o.draw(c, th, st, ps, vals); }
+          }
+        } catch (e) { problems.add(`${where()} frame ${frame}: ${e.message}`); }
+      }
+    }
   }
   const list = [...problems];
   if (list.length) { bad++; console.log(`✗ ${cat}: ${list.length} problems`); list.slice(0, 15).forEach(p => console.log("   " + p)); if (list.length > 15) console.log(`   … ${list.length - 15} more`); }

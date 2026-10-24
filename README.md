@@ -47,8 +47,30 @@ Unofficial. Airwindows is the work of Chris Johnson; this project only wraps it.
 - Live restores the effect first and the dial values after it, so a saved set comes back
   exactly. The menu order of each device is fixed in `tools/effect_order.json`: new
   Airwindows effects are added at the end, so saved sets never load a different effect.
-- The look follows Ableton's own Max for Live devices: Ableton Sans labels, value text
-  under each dial, previous/next arrows next to the effect menu.
+- Every device has **Input** and **Output** gain (dB, automatable) and a display in the style of
+  Live's own devices (needle, activity history, spectrum, transfer curve, scope, stereo field …,
+  chosen per category). The displays are driven by real measurements that `airwin~` takes
+  from the audio about 30 times per second: levels, gain change, spectra of input, output and
+  their difference, transfer curve, scopes, mid/side, cross-correlation.
+
+## Device UI: design and review
+
+The device UIs are designed in a browser and run unchanged inside the device:
+
+1. `python3 design/server.py` and open http://localhost:8765. Each category shows Ableton
+   reference devices, the current device and several animated options. *Signal: Real audio*
+   plays measurements of the real effect (recorded with `awtool frames`).
+2. Approve one option per category (saved in `design/decisions.json`), then press
+   **Build devices**: it runs `tools/rebuild_devices.sh`, which bundles the approved designs
+   (`tools/build_ui.py` → `javascript/aw_ui_<Category>.js`), generates the devices and copies
+   them to the User Library.
+3. In the device, a `v8ui` runs the design through `design/mgcanvas.js` (the browser's canvas
+   API on Max's mgraphics) and moves Live's own dials, menu and gain controls to the places the
+   design draws them.
+
+Checks: `node design/smoke.js` (every option, every effect, both themes, simulated and real
+data), `design/mgtest.html` (pixel comparison of browser vs mgraphics drawing),
+`awtool analysis` (measurement self-test).
 
 ## Install (macOS, Live 12 Suite or Max for Live)
 
@@ -73,6 +95,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ./build/tools/awtool/awtool check 48000          # runs every effect on test audio
 ./build/tools/awtool/awtool dump > build/registry.json
+python3 tools/build_ui.py                          # needs Node.js
 python3 tools/gen_devices.py build/registry.json devices
 ```
 

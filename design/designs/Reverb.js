@@ -4,7 +4,7 @@ DESIGNS["Reverb"] = {
     refs: [["HybridReverbL12.png", "Hybrid Reverb"], ["ReverbL12.png", "Reverb"]],
     lead: "Visual cue: the reverb tail itself — what the space is doing to the sound, drawn live.",
     options: [
-      { id: "A", name: "Hybrid", width: 636, step: stepReverb,
+      { id: "A", name: "Hybrid", width: 636, step: stepReverb, live: liveGeneric,
         why: "Large dark display with the live wet signal scrolling in orange, controls as a row of dials under it — like Hybrid Reverb.",
         bullets: ["Scrolling wet waveform with dry hits in grey", "Effect menu and arrows inside the display", "In/Out meters on the right"],
         draw(c, th, st, ps, vals) {
@@ -18,7 +18,7 @@ DESIGNS["Reverb"] = {
           knobGrid(c, th, ps, { x: dx, y: dy + dh + 6, w: dw, h: DEVICE_H - dh - 20 }, 8, vals, 60);
           gainStrip(c, th, 568, st);
         } },
-      { id: "B", name: "Hybrid display", width: 636, step: stepReverb,
+      { id: "B", name: "Hybrid display", width: 636, step: stepReverb, live: liveGeneric,
         why: "Everything in one display: the waveform on top, and each control as a draggable coloured readout under it — Hybrid Reverb's display row.",
         bullets: ["Values are click-and-drag numbers (live.numbox), no dials", "Cyan readouts, grey labels, as in Hybrid Reverb", "Most compact: fits 13 controls in two rows"],
         draw(c, th, st, ps, vals) {
@@ -37,6 +37,7 @@ DESIGNS["Reverb"] = {
           gainStrip(c, th, 568, st);
         } },
       { id: "C", name: "Decay map", width: 628, step: stepReverb,
+        live(st, m, dt) { liveGeneric(st, m, dt); (st.envHist = st.envHist || []).push(m.outRmsDb); if (st.envHist.length > 90) st.envHist.shift(); },
         why: "Shows the shape of the tail (early reflections, then decay) with an estimated decay time, next to the dials.",
         bullets: ["Decay curve with time axis and ≈ decay time", "Selector panel on the left (as today)", "Dials in a grid on the right"],
         draw(c, th, st, ps, vals) {
@@ -44,7 +45,7 @@ DESIGNS["Reverb"] = {
           txt(c, 10, HEAD_H + 16, "Reverb", { color: th.dim, align: "left" });
           menu(c, th, 10, HEAD_H + 22, 118, "Galactic3"); arrows(c, th, 98, HEAD_H + 5);
           c.font = `400 9.5px ${FONT}`; c.fillStyle = th.dim; c.textAlign = "left";
-          ["Galactic3 is a super-reverb", "designed specially for pads", "and space ambient."].forEach((l, i) => c.fillText(l, 10, HEAD_H + 54 + i * 12));
+          wrapText(c, 10, HEAD_H + 54, 118, S.effWhat, { color: th.dim, maxLines: 7 });
           decayMap(c, th, 140, HEAD_H + 6, 210, DEVICE_H - 12, st);
           knobGrid(c, th, ps, { x: 354, y: HEAD_H + 4, w: 202, h: DEVICE_H - 8 }, 3, vals);
           gainStrip(c, th, 628 - GAIN_W - 4, st);

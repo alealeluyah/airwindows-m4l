@@ -6,8 +6,10 @@
 Serves this folder and stores approvals in decisions.json:
     GET  /api/decisions
     POST /api/decision   {"category": "...", "option": "A", "notes": "..."}
+    POST /api/build      run tools/rebuild_devices.sh (build + install the devices)
 """
 import json
+import subprocess
 import sys
 import threading
 from datetime import datetime
@@ -46,6 +48,12 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path == "/api/build":
+            with LOCK:
+                r = subprocess.run([str(ROOT.parent / "tools" / "rebuild_devices.sh")],
+                                   capture_output=True, text=True, timeout=600)
+            return self._json(200 if r.returncode == 0 else 500,
+                              {"ok": r.returncode == 0, "output": (r.stdout + r.stderr)[-4000:]})
         if self.path != "/api/decision":
             return self._json(404, {"error": "not found"})
         n = int(self.headers.get("Content-Length", 0))

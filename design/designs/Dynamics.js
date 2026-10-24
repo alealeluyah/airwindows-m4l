@@ -4,7 +4,7 @@ DESIGNS["Dynamics"] = {
     refs: [["GlueL12.png", "Glue Compressor"], ["CompressorL12.png", "Compressor"], ["LimiterL12.png", "Limiter"]],
     lead: "Visual cue: how much the effect is turning the level down (gain reduction), measured live from input vs output.",
     options: [
-      { id: "AB", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics,
+      { id: "AB", name: "Glue + Compressor views (your pick)", width: 556, step: stepDynamics, live: liveGeneric,
         why: "One display with two views, switched by the buttons in its header like Compressor: Glue's gain-reduction needle, or Compressor's activity history. Input and Output gain on the right.",
         bullets: ["Click Needle / Activity in the display header to switch views (a saved device setting)",
                   "Both views are driven by input vs output level (gain reduction), measured by airwin~",
@@ -27,7 +27,7 @@ DESIGNS["Dynamics"] = {
           first.forEach((p, i) => knob(c, th, dx + (dw - first.length * 74) / 2 + i * 74, dy + dh + 6, 74, p, vals[p._i], true));
           gainStrip(c, th, 556 - GAIN_W - 4, st);
         } },
-      { id: "A", name: "Glue", width: 470, step: stepDynamics,
+      { id: "A", name: "Glue", width: 470, step: stepDynamics, live: liveGeneric,
         why: "Analog needle in a dark display, the first two controls large under it, the rest in side columns — like Glue Compressor.",
         bullets: ["Gain-reduction needle, 0–20 dB", "First two controls as large dials inside the display", "Effect menu and arrows top-left"],
         draw(c, th, st, ps, vals) {
@@ -41,7 +41,7 @@ DESIGNS["Dynamics"] = {
           knobGrid(c, th, right, { x: 330, y: HEAD_H + 6, w: 104, h: DEVICE_H - 12 }, 2, vals);
           ioMeters(c, th, 440, HEAD_H + 20, 120, st);
         } },
-      { id: "B", name: "Compressor", width: 560, step: stepDynamics,
+      { id: "B", name: "Compressor", width: 560, step: stepDynamics, live: liveGeneric,
         why: "Wide activity view: incoming signal in grey, gain reduction as an orange trace, readouts on top — like Compressor's display.",
         bullets: ["Scrolling history (input + gain reduction)", "Live readouts: In / GR / Out in the display header", "Controls in two side columns"],
         draw(c, th, st, ps, vals) {
@@ -60,7 +60,7 @@ DESIGNS["Dynamics"] = {
           txt(c, dx + 322, dy + 12, `${st.outL.toFixed(1)} dB`, { color: th.cyan, align: "left" });
           knobGrid(c, th, R, { x: 450, y: HEAD_H + 4, w: 108, h: DEVICE_H - 8 }, 2, vals);
         } },
-      { id: "C", name: "Limiter", width: 480, step: stepDynamics,
+      { id: "C", name: "Limiter", width: 480, step: stepDynamics, live: liveGeneric,
         why: "Tall level meters in the middle — input level on the left, gain reduction on the right, with a dB scale — like Limiter.",
         bullets: ["Stereo input meters + gain-reduction bars", "Peak readouts under the meters", "Controls on both sides"],
         draw(c, th, st, ps, vals) {
