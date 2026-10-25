@@ -278,14 +278,12 @@ def build(category, names):
     p.line(thisdev, 0, meter, 0)
     p.line(meter, 0, aw, 0)
 
-    # Live theme: every theme colour (live.colors everything), again when the theme changes
-    colq = p.box("message", [600, 260, 100, 22], text="everything", numinlets=2, numoutlets=1, outlettype=[""])
+    # Live theme: the display reads the theme colours itself (max.getcolor) on every redraw;
+    # live.colors bangs when the user changes the theme, and the display redraws
+    colq = p.box("message", [600, 260, 100, 22], text="themechanged", numinlets=2, numoutlets=1, outlettype=[""])
     colors = p.newobj("live.colors", [600, 290, 70, 22], 1, 2, ["", "bang"])
-    p.line(lb, 0, colq, 0)
-    p.line(thisdev, 0, colq, 0)
     p.line(colors, 1, colq, 0)
-    p.line(colq, 0, colors, 0)
-    p.line(colors, 0, display, 0)
+    p.line(colq, 0, display, 0)
 
     # Input / Output gain (dB), on every device
     for i, (vn, long, msg) in enumerate([("gainIn", "Input", "ingain"), ("gainOut", "Output", "outgain")]):

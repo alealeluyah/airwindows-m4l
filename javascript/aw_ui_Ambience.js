@@ -1085,36 +1085,41 @@ function display(i) { if (params[i]) params[i].display = arrayfromargs(arguments
 function algo(s) { S.effName = String(s); mgraphics.redraw(); }
 function theme(name) { if (S.themes[name]) { S.theme = name; mgraphics.redraw(); } }
 function what() { S.effWhat = arrayfromargs(arguments).join(" "); mgraphics.redraw(); }
-// live.colors "everything": one message per theme colour ("live_surface_bg r g b a")
-const LIVE_COLORS = {};
-function anything() {
-  const n = messagename;
-  if (n.indexOf("live_") !== 0) return;      // category, pvalue, …: not needed for drawing
-  LIVE_COLORS[n] = arrayfromargs(arguments);
-  log("color", n, LIVE_COLORS[n].map(v => Math.round(v * 255)).join(" "));
-  liveTheme();
-}
-// Live colour name -> tok() field. Fields Live does not report keep the Live 12 values.
+// Live theme. max.getcolor() returns the colour of the user's current Live theme (Max
+// "dynamic colours"). paint() reads them every time, so the device follows any theme change.
+// Live colour name -> tok() field. Fields with no Live colour keep the Live 12 values.
 const LIVE_MAP = {
-  live_surface_bg: ["tile", "panel"], live_surface_frame: ["gutter", "body"],
-  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], live_lcd_title: ["title", "dispText"],
-  live_lcd_control_fg: ["orange"], live_lcd_control_fg_alt: ["cyan"],
-  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
+  live_surface_bg: ["tile", "panel"],                 // Device Background
+  live_lcd_bg: ["display"], live_lcd_frame: ["dline"], // LCD Background, LCD Line
+  live_lcd_title: ["title"], live_display_scale_text: ["dispText", "scale"],
+  live_display_line_one: ["orange"], live_display_line_two: ["cyan"],   // LCD Shape, LCD Shape Variant
+  live_control_bg: ["ctrlBg"], live_control_fg: ["text"], live_contrast_frame: ["frame"],
+  live_control_selection: ["on"], live_value_arc: ["arc"], live_meter_bg: ["meterBg"],
 };
 const hex = a => "#" + a.slice(0, 3).map(v => ("0" + Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16)).slice(-2)).join("");
-let themeTask = null;
+const luma = a => 0.2126 * a[0] + 0.7152 * a[1] + 0.0722 * a[2];
+let liveLogged = "";
 function liveTheme() {
-  // the colours arrive as a burst of messages: apply once, after the burst
-  if (themeTask) return;
-  themeTask = new Task(function () {
-    themeTask = null;
-    const L = {};
-    for (const n in LIVE_MAP) if (LIVE_COLORS[n]) LIVE_MAP[n].forEach(k => (L[k] = hex(LIVE_COLORS[n])));
-    S.live = L;
-    mgraphics.redraw();
-  });
-  themeTask.schedule(20);
+  if (typeof max === "undefined" || !max.getcolor) return;     // review page / tests: keep tok()
+  const L = {}, got = {};
+  for (const n in LIVE_MAP) {
+    let c = null;
+    try { c = max.getcolor(n); } catch (e) {}
+    if (c && c.length >= 3) { got[n] = c; LIVE_MAP[n].forEach(k => (L[k] = hex(c))); }
+  }
+  const bg = got.live_surface_bg;
+  if (bg) {
+    S.theme = luma(bg) > 0.45 ? "light" : "dark";             // the fields Live has no colour for
+    // gutters: a little lighter than the tiles, as in Live 12 (SurfaceHighlight)
+    L.gutter = L.body = hex(bg.slice(0, 3).map(v => v + (S.theme === "light" ? 0.09 : 0.063)));
+  }
+  S.live = L;
+  const key = JSON.stringify(L);
+  if (key !== liveLogged) { liveLogged = key; log("theme", S.theme, key); }
 }
+function themechanged() { mgraphics.redraw(); }
+// other messages from airwin~ (category, pvalue, ...) are not needed for drawing: ignore them quietly
+function anything() {}
 
 // ---------------------------------------------------------------- controls are Live objects
 // Positions are recorded in device pixels (S.offX: offset of the current view).
@@ -1228,6 +1233,7 @@ function paint() {
   const c = makeCanvas(mgraphics, { font: "Ableton Sans Medium", boldFont: "Ableton Sans Bold" });
   c.translate(0, -HEAD_H);
   rec = [];
+  liveTheme();
   const th = tok();
   try {
     S.hints = [];
@@ -1241,6 +1247,3 @@ function paint() {
   publishLayout();
   annotateDials();
 }
-
-// live.colors answers "live_control_bg r g b a": a light control background means a light theme
-function live_control_bg(r, g, b, a) { LIVE_COLORS.live_control_bg = [r, g, b, a]; liveTheme(); theme(0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "light" : "dark"); }

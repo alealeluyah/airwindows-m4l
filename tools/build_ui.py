@@ -73,6 +73,7 @@ def main():
     path = OUT / "aw_ui_manifest.json"
     old = json.loads(path.read_text()) if path.exists() else {}
     old.update({k: v for k, v in man.items() if k in chosen_all})
+    old = {k: v for k, v in old.items() if (DESIGN / "designs" / f"{k}.js").exists()}   # removed categories
     path.write_text(json.dumps(old, indent=1, sort_keys=True) + "\n")
 
 
