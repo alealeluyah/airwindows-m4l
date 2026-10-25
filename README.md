@@ -52,6 +52,12 @@ CStrip and Pafnuty ("Unclassified" there) are in Filter and Effects, next to CSt
   chosen per category). The displays are driven by real measurements that `airwin~` takes
   from the audio about 30 times per second: levels, gain change, spectra of input, output and
   their difference, transfer curve, scopes, mid/side, cross-correlation.
+- The devices follow your Live theme (Settings → Theme & Colors), also custom themes: the
+  display reads the theme colours each time it draws, and redraws when the theme changes.
+- A double-click on a dial sets it back to the chosen effect's default value.
+- Live's browser shows each device with tags (for example *Devices → Reverb*) and in
+  collections by task (Mix, Master, Drums, Sound Design). Both come from
+  `devices/Ableton Folder Info/`, the file Live itself writes when you tag a file.
 
 ## Device UI: design and review
 
@@ -60,7 +66,8 @@ The device UIs are designed in a browser and run unchanged inside the device:
 1. `python3 design/server.py` and open http://localhost:8765. Each category shows Ableton
    reference devices, the current device and several animated options. *Signal: Real audio*
    plays measurements of the real effect (recorded with `awtool frames`).
-2. Approve one option per category (saved in `design/decisions.json`), then press
+2. Approve one option per category (saved in `design/decisions.json`; `design/final.json` lists the
+   views each final device gets), then press
    **Build devices**: it runs `tools/rebuild_devices.sh`, which bundles the approved designs
    (`tools/build_ui.py` → `javascript/aw_ui_<Category>.js`), generates the devices and copies
    them to the User Library.
@@ -76,8 +83,10 @@ data), `design/mgtest.html` (pixel comparison of browser vs mgraphics drawing),
 
 1. Put this folder (or the release zip) in `~/Documents/Max 9/Packages/`, so that
    `~/Documents/Max 9/Packages/airwindows-m4l/externals/airwin~.mxo` exists.
-2. Copy the files in `devices/` to your User Library, for example
+2. Copy the contents of `devices/` (the `.amxd` files and the `Ableton Folder Info` folder,
+   which holds the browser tags) to your User Library, for example
    `~/Music/Ableton/User Library/Presets/Audio Effects/Max Audio Effect/Airwindows/`.
+   `tools/rebuild_devices.sh` does this for you.
 3. In Live's browser, open *User Library → Presets → Audio Effects → Max Audio Effect →
    Airwindows* and drag a device to a track.
 

@@ -74,7 +74,7 @@ Every colour used in a screen appears in its legend (rule 2.3).
 
 | # | Rule | Check |
 |---|------|-------|
-| 6.1 | All colours come from `tok()`. In the device, `tok()` follows the user's Live theme through `live.colors` (`getall`), so custom themes match. | No hex colour in a design file except data colours that come from `tok()` too. |
+| 6.1 | All colours come from `tok()`. In the device, `tok()` follows the user's Live theme: the display reads the theme colours with `max.getcolor()` on every redraw, and `live.colors` triggers a redraw when the theme changes (578f3ad), so custom themes match. | No hex colour in a design file except data colours that come from `tok()` too. |
 | 6.2 | Every tile differs from the gutter, and every screen from its tile, by ≥ 6 % luminance in both themes. | `contrast` check in `smoke.js`. |
 
 ## 7. Help

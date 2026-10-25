@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Build the 22 devices from the approved designs and install them in Live's User Library.
 #   tools/rebuild_devices.sh [--no-install]
-# Uses design/decisions.json (options approved on the review page; first option otherwise).
+# Views per device: design/final.json, else design/decisions.json (approved on the review page), else the first option.
 set -e
 ROOT=${0:A:h:h}
 cd "$ROOT"
