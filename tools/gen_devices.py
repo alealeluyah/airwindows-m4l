@@ -409,6 +409,16 @@ TAGS = {
     "Utility": [D + "Utility"],
     "XYZ Filters": [D + "Filter"],
 }
+# Live collections (colour labels) per category, by task: 2 MIX, 3 MASTER, 4 VOCAL, 5 DRUMS,
+# 6 SOUND DESIGN, 7 INSTR. Only the number is stored; the user names the collections in Live.
+MIX, MASTER, DRUMS, SD = 2, 3, 5, 6
+COLLECTIONS = {
+    "Ambience": [MIX, SD], "Amp Sims": [SD], "Bass": [MIX], "Biquads": [MIX], "Brightness": [MIX],
+    "Clipping": [MIX, MASTER], "Consoles": [MIX], "Distortion": [SD], "Dithers": [MASTER],
+    "Dynamics": [MIX, DRUMS], "Effects": [SD], "Filter": [MIX, SD], "Lo-Fi": [SD], "Noise": [SD],
+    "Reverb": [MIX, SD], "Saturation": [MIX], "Stereo": [MIX, MASTER], "Subtlety": [MIX, MASTER],
+    "Tape": [MIX], "Tone Color": [MIX], "Utility": [MIX, MASTER], "XYZ Filters": [SD],
+}
 FOLDER_INFO = "dc66a3fa-0fe1-5352-91cf-3ec237e9ee90.xmp"   # Live's fixed name for a folder's own file
 
 
@@ -419,7 +429,10 @@ def folder_info(cats):
         f"                  <ablFR:filePath>{escape(f'Airwindows {c}.amxd')}</ablFR:filePath>\n"
         "                  <ablFR:keywords>\n                     <rdf:Bag>\n"
         + "".join(f"                        <rdf:li>{escape(t)}</rdf:li>\n" for t in TAGS[c])
-        + "                     </rdf:Bag>\n                  </ablFR:keywords>\n               </rdf:li>\n"
+        + "                     </rdf:Bag>\n                  </ablFR:keywords>\n"
+        "                  <ablFR:colors>\n                     <rdf:Bag>\n"
+        + "".join(f"                        <rdf:li>{n}</rdf:li>\n" for n in COLLECTIONS[c])
+        + "                     </rdf:Bag>\n                  </ablFR:colors>\n               </rdf:li>\n"
         for c in cats)
     return ('<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 6.0.0">\n'
             '   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
@@ -488,9 +501,9 @@ def main():
         path.write_bytes(amxd_bytes(build(cat, names)))
         print(f"{path.name}: {len(names)} effects")
     if not a.only:
-        missing = sorted(set(cats) - set(TAGS))
+        missing = sorted(set(cats) - (set(TAGS) & set(COLLECTIONS)))
         if missing:
-            raise SystemExit(f"no browser tags for: {missing} (add them to TAGS)")
+            raise SystemExit(f"no browser tags for: {missing} (add them to TAGS and COLLECTIONS)")
         info = out / "Ableton Folder Info"
         info.mkdir(exist_ok=True)
         (info / FOLDER_INFO).write_text(folder_info(sorted(cats)), encoding="utf-8")

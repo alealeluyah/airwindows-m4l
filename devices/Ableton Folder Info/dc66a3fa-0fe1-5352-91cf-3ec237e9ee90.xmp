@@ -17,6 +17,12 @@
                         <rdf:li>Devices|Modulation</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Amp Sims.amxd</ablFR:filePath>
@@ -27,6 +33,11 @@
                         <rdf:li>Devices|Distortion</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Bass.amxd</ablFR:filePath>
@@ -36,6 +47,11 @@
                         <rdf:li>Devices|Mixing &amp; Mastering|Instrument Mixing</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Biquads.amxd</ablFR:filePath>
@@ -45,6 +61,11 @@
                         <rdf:li>Devices|EQ|Filter EQ</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Brightness.amxd</ablFR:filePath>
@@ -54,6 +75,11 @@
                         <rdf:li>Devices|Mixing &amp; Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Clipping.amxd</ablFR:filePath>
@@ -64,6 +90,12 @@
                         <rdf:li>Devices|Mixing &amp; Mastering|Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>3</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Consoles.amxd</ablFR:filePath>
@@ -73,6 +105,11 @@
                         <rdf:li>Devices|Vintage Emulation</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Distortion.amxd</ablFR:filePath>
@@ -81,6 +118,11 @@
                         <rdf:li>Devices|Distortion</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Dithers.amxd</ablFR:filePath>
@@ -90,6 +132,11 @@
                         <rdf:li>Devices|Mixing &amp; Mastering|Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>3</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Dynamics.amxd</ablFR:filePath>
@@ -99,6 +146,12 @@
                         <rdf:li>Devices|Mixing &amp; Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>5</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Effects.amxd</ablFR:filePath>
@@ -109,6 +162,11 @@
                         <rdf:li>Devices|Pitch Shift</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Filter.amxd</ablFR:filePath>
@@ -118,6 +176,12 @@
                         <rdf:li>Devices|EQ</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Lo-Fi.amxd</ablFR:filePath>
@@ -127,6 +191,11 @@
                         <rdf:li>Devices|Vintage Emulation</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Noise.amxd</ablFR:filePath>
@@ -136,6 +205,11 @@
                         <rdf:li>Devices|Generative</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Reverb.amxd</ablFR:filePath>
@@ -146,6 +220,12 @@
                         <rdf:li>Devices|Reverb|Special Reverb</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Saturation.amxd</ablFR:filePath>
@@ -155,6 +235,11 @@
                         <rdf:li>Devices|Mixing &amp; Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Stereo.amxd</ablFR:filePath>
@@ -164,6 +249,12 @@
                         <rdf:li>Devices|Utility</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>3</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Subtlety.amxd</ablFR:filePath>
@@ -173,6 +264,12 @@
                         <rdf:li>Devices|Distortion</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>3</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Tape.amxd</ablFR:filePath>
@@ -183,6 +280,11 @@
                         <rdf:li>Devices|Mixing &amp; Mastering</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Tone Color.amxd</ablFR:filePath>
@@ -193,6 +295,11 @@
                         <rdf:li>Devices|EQ</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows Utility.amxd</ablFR:filePath>
@@ -201,6 +308,12 @@
                         <rdf:li>Devices|Utility</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>2</rdf:li>
+                        <rdf:li>3</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
                <rdf:li rdf:parseType="Resource">
                   <ablFR:filePath>Airwindows XYZ Filters.amxd</ablFR:filePath>
@@ -209,6 +322,11 @@
                         <rdf:li>Devices|Filter</rdf:li>
                      </rdf:Bag>
                   </ablFR:keywords>
+                  <ablFR:colors>
+                     <rdf:Bag>
+                        <rdf:li>6</rdf:li>
+                     </rdf:Bag>
+                  </ablFR:colors>
                </rdf:li>
             </rdf:Bag>
          </ablFR:items>
